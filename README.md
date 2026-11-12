@@ -22,9 +22,11 @@ Embedded browsers that do not support Pointer Lock fall back to a reduced contro
 |---|---|---|---|
 | W A S D | Move | Left mouse | Fire |
 | Shift | Sprint | Right mouse | Aim down sights |
-| C (hold) | Crouch (enemies cannot hit you behind sandbags) | R | Reload |
+| Ctrl or C (hold) | Crouch (enemies cannot hit you behind sandbags) | R | Reload |
 | Space | Jump (you can get onto car roofs and sandbags) | 1 / 2 / wheel | Rifle / pistol |
 | G | Grenade | Esc | Pause |
+
+On Windows and Linux, Ctrl+W closes the browser tab and a page cannot block it, so use C to crouch while moving forward there.
 
 ## What is in the game
 

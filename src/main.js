@@ -356,7 +356,7 @@ function updatePlayer(dt) {
   let f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0), s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
   const len = Math.hypot(f, s) || 1; f /= len; s /= len;
   if (edgeTurn && !document.pointerLockElement) P.yaw -= edgeTurn * 2.4 * dt;
-  P.crouch = keys.has('KeyC');
+  P.crouch = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
   const sprint = keys.has('ShiftLeft') && f > 0 && !P.crouch && !P.ads;
   let sp = P.crouch ? PL.crouch : sprint ? PL.sprint : PL.walk; if (P.ads) sp *= PL.adsMul;
   const sy = Math.sin(P.yaw), cy = Math.cos(P.yaw);
@@ -701,7 +701,8 @@ function frame(now) {
 // ============================================================ Input
 addEventListener('keydown', (e) => {
   if (S.mode !== 'playing') return;
-  if (['Space', 'Tab', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+  // Ctrl is crouch, so stop Ctrl+S / Ctrl+D / Ctrl+A from opening browser dialogs (Ctrl+W cannot be blocked by a page)
+  if (e.ctrlKey || ['Space', 'Tab', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
   if (e.code === 'Escape' && !document.pointerLockElement) { setMode('paused'); firing = false; keys.clear(); return; }
   keys.add(e.code);
