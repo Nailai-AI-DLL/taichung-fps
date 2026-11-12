@@ -10,24 +10,24 @@ export const PLAYER = {
 };
 
 export const WEAPONS = [
-  { id: 't91', name: 'T91 Rifle', mag: 30, reserve: 180, maxReserve: 300, auto: true,
+  { id: 'm16', name: 'M16 Rifle', mag: 30, reserve: 180, maxReserve: 300, auto: true,
     interval: 0.085, dmg: 27, head: 2.4, spread: 0.011, recoil: 0.012, reload: 2.0, range: 300 },
-  { id: 't75', name: 'T75 Pistol', mag: 15, reserve: Infinity, maxReserve: Infinity, auto: false,
+  { id: 'm9', name: 'Beretta 92', mag: 15, reserve: Infinity, maxReserve: Infinity, auto: false,
     interval: 0.16, dmg: 36, head: 2.2, spread: 0.008, recoil: 0.02, reload: 1.3, range: 120 },
   // price: bought in the shop instead of owned from the start. scope: full-screen scope overlay when aiming.
   // supply: rounds added by each supply crate. Number keys follow the order of this list.
-  { id: 't93', name: 'T93 Sniper', price: 2000, mag: 5, reserve: 20, maxReserve: 30, auto: false,
+  { id: 'm24', name: 'M24 Sniper', price: 2000, mag: 5, reserve: 20, maxReserve: 30, auto: false,
     interval: 1.25, dmg: 230, head: 2.5, spread: 0.035, adsSpread: 0, recoil: 0.045, reload: 2.8, range: 400, scope: true, zoomFov: 16, supply: 10 },
-  { id: 'rev', name: 'Revolver', price: 1200, mag: 6, reserve: 36, maxReserve: 60, auto: false,
-    interval: 0.38, dmg: 95, head: 2.2, spread: 0.01, recoil: 0.04, reload: 2.4, range: 150, supply: 12 },
+  { id: 'deagle', name: 'Desert Eagle', price: 1200, mag: 7, reserve: 36, maxReserve: 60, auto: false,
+    interval: 0.38, dmg: 95, head: 2.2, spread: 0.01, recoil: 0.04, reload: 2.0, range: 150, supply: 14 },
 ];
 
 // Shop stock. Kill rewards are ENEMY_TYPES[].score plus RULES.headBonus for a headshot.
 export const SHOP = [
-  { id: 't93', type: 'weapon', weapon: 't93', name: 'T93 Sniper Rifle', desc: 'Bolt action, 5 rounds. One shot drops most infantry. Key 3.', price: 2000 },
-  { id: 't93ammo', type: 'ammo', weapon: 't93', amount: 10, name: 'Sniper Ammo', desc: '+10 rounds for the T93.', price: 400 },
-  { id: 'rev', type: 'weapon', weapon: 'rev', name: 'Revolver', desc: 'Six heavy rounds. Two body shots or one headshot per rifleman. Key 4.', price: 1200 },
-  { id: 'revammo', type: 'ammo', weapon: 'rev', amount: 12, name: 'Revolver Ammo', desc: '+12 rounds for the revolver.', price: 250 },
+  { id: 'm24', type: 'weapon', weapon: 'm24', name: 'M24 Sniper Rifle', desc: 'Bolt action, 5 rounds. One shot drops most infantry. Key 3.', price: 2000 },
+  { id: 'm24ammo', type: 'ammo', weapon: 'm24', amount: 10, name: 'Sniper Ammo', desc: '+10 rounds for the M24.', price: 400 },
+  { id: 'deagle', type: 'weapon', weapon: 'deagle', name: 'Desert Eagle', desc: 'Seven heavy rounds. Two body shots or one headshot per rifleman. Key 4.', price: 1200 },
+  { id: 'deagleammo', type: 'ammo', weapon: 'deagle', amount: 14, name: 'Desert Eagle Ammo', desc: '+14 rounds for the Desert Eagle.', price: 250 },
   { id: 'grenade', type: 'grenade', amount: 1, name: 'Grenade', desc: 'One frag grenade. You can carry four.', price: 300 },
   { id: 'medkit', type: 'med', amount: 50, name: 'Medkit', desc: 'Restores 50 health on the spot.', price: 350 },
 ];

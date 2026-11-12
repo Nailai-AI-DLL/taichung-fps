@@ -23,7 +23,7 @@ Embedded browsers that do not support Pointer Lock fall back to a reduced contro
 | W A S D | Move | Left mouse | Fire |
 | Shift | Sprint | Right mouse | Aim down sights |
 | Ctrl or C (hold) | Crouch (enemies cannot hit you behind sandbags) | R | Reload |
-| Space | Jump (you can get onto car roofs and sandbags) | 1 / 2 / 3 / 4 / wheel | Rifle / pistol / sniper / revolver |
+| Space | Jump (you can get onto car roofs and sandbags) | 1 / 2 / 3 / 4 / wheel | M16 / Beretta 92 / M24 / Desert Eagle |
 | G | Grenade | B | Armory (shop) |
 | Esc | Pause (resume or return to the main menu) | | |
 
@@ -32,11 +32,11 @@ On Windows and Linux, Ctrl+W closes the browser tab and a page cannot block it, 
 ## What is in the game
 
 - **Map**: Taichung City Hall, the National Taichung Theater, Maple Garden, the central park, and the surrounding boulevards, with abandoned cars, barriers, and sandbags as cover.
-- **Weapons**: T91 rifle, T75 pistol (unlimited reserve ammo as a fallback), grenades, and two weapons you buy in the armory: a T93 sniper rifle with a scope and a revolver.
-- **Money**: every kill pays a reward, with a bonus for headshots. Press B at any time and anywhere to open the armory, which pauses the fight. It sells the sniper rifle, the revolver, ammo for both, grenades, and medkits.
+- **Weapons**: M16 rifle, Beretta 92 pistol (unlimited reserve ammo as a fallback), grenades, and two weapons you buy in the armory: an M24 sniper rifle with a scope and a Desert Eagle.
+- **Money**: every kill pays a reward, with a bonus for headshots. Press B at any time and anywhere to open the armory, which pauses the fight. It sells the sniper rifle, the Desert Eagle, ammo for both, grenades, and medkits.
 - **Enemies**: riflemen, assault troops, heavy machine gunners, and kamikaze drones. There are 120 across the six waves.
 - **Between waves**: a supply crate appears at the command post with ammo, health, and grenades.
-- **Art and audio**: low-poly models, canvas-generated textures, and sound synthesized with Web Audio. The game uses no external assets.
+- **Art and audio**: low-poly scenery with canvas-generated textures, GLB weapon models in first person, and sound synthesized with Web Audio.
 
 ## Files
 
@@ -47,6 +47,9 @@ On Windows and Linux, Ctrl+W closes the browser tab and a page cannot block it, 
 | `src/core.js` | Pure logic: ray casting, collision, flow-field pathfinding |
 | `src/main.js` | three.js scene, player, weapons, enemy AI, HUD, audio |
 | `index.html` | Menus, HUD, styles |
+| `assets/models/` | Weapon models (GLB). The game falls back to box placeholders if a file is missing |
+| `tools/viewer.html` | Dev page that shows the models side by side with axes: `http://localhost:5273/tools/viewer.html?m=M16,M24` |
+| `vendor/` | three.js r160 and its GLTF loader |
 | `scripts/stamp.mjs` | Writes content-hash versions for every module into `index.html` (cache busting) |
 | `tests/core.test.mjs` | Unit tests, run with `npm test` |
 | `docs/decisions/` | Design decisions and tunable items |
@@ -61,7 +64,7 @@ The nine tests have no dependencies; they were run on Node.js 22. They cover ray
 
 ## Releasing a change
 
-After editing anything in `src/` or `vendor/`, run:
+After editing anything in `src/`, `vendor/`, or `assets/`, run:
 
 ```bash
 npm run stamp
@@ -78,8 +81,9 @@ This rewrites the import map in `index.html` so each module URL carries a hash o
    - `__game.spawnEnemy({type:'heavy',dir:'N'})` spawns an enemy.
    - `__game.S` shows the game state.
 4. To add an enemy type, add an entry to `ENEMY_TYPES` and use it in `WAVES[].units`. Its appearance is built in `spawnEnemy` in `main.js`.
-5. To sell a new weapon, add it to `WEAPONS` with a `price` and add a matching entry to `SHOP`. Its view model and sound are in `main.js`.
-6. To add a wave, add an entry to `WAVES`. `dirs` accepts N, E, W, and S. No code changes are needed.
+5. To swap or add a weapon model, put the GLB in `assets/models/` and edit the `VIEW` table in `main.js` (file name, real length, which way the barrel points, barrel height). Check it first in `tools/viewer.html`.
+6. To sell a new weapon, add it to `WEAPONS` with a `price` and add a matching entry to `SHOP`. Its view model and sound are in `main.js`.
+7. To add a wave, add an entry to `WAVES`. `dirs` accepts N, E, W, and S. No code changes are needed.
 
 ## Known limitations
 

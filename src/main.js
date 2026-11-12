@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { raycastWorld, resolveCircle, groundAt, buildGrid, flowField, flowTarget, cellIx, GRID_N, lerpAngle } from './core.js';
 import { buildMap } from './map.js';
+import { GLTFLoader } from '../vendor/loaders/GLTFLoader.js';
 import { PLAYER as PL, WEAPONS, SHOP, GRENADE, ENEMY_TYPES, RULES, WAVES, STORY, expandWave } from './config.js';
 
 const $ = (id) => document.getElementById(id);
@@ -236,7 +237,7 @@ const sfx = {
   rifle() { noise(0.55, 0.13, 3200); tone(160, 50, 0.09, 0.4, 'square'); },
   pistol() { noise(0.45, 0.09, 4500); tone(240, 70, 0.06, 0.3, 'square'); },
   sniper() { noise(0.85, 0.4, 1700); tone(130, 34, 0.28, 0.6, 'square'); },
-  revolver() { noise(0.7, 0.2, 2600); tone(190, 45, 0.14, 0.5, 'square'); },
+  magnum() { noise(0.7, 0.2, 2600); tone(190, 45, 0.14, 0.5, 'square'); },
   enemy(d) { const v = 0.35 / (1 + d / 18); noise(v, 0.12, 1700); },
   boom(d = 0) { const v = 1 / (1 + d / 30); noise(0.9 * v, 1.0, 600); tone(90, 28, 0.6, 0.8 * v); },
   hit() { tone(1700, 1500, 0.035, 0.18, 'square'); },
@@ -292,7 +293,7 @@ let firing = false, fireLatch = false, fireQueued = false, edgeTurn = 0; // edge
 // ============================================================ View model (attached to the camera)
 const gun = new THREE.Group(); camera.add(gun);
 const gunMat = lam(0x2e3238), gunMat2 = lam(0x474c40);
-const rifleModel = new THREE.Group(), pistolModel = new THREE.Group(), sniperModel = new THREE.Group(), revolverModel = new THREE.Group();
+const rifleModel = new THREE.Group(), pistolModel = new THREE.Group(), sniperModel = new THREE.Group(), magnumModel = new THREE.Group();
 box(rifleModel, gunMat, 0.055, 0.075, 0.52, 0, 0, -0.1); box(rifleModel, gunMat, 0.028, 0.028, 0.3, 0, 0.008, -0.5);
 box(rifleModel, gunMat2, 0.05, 0.16, 0.07, 0, -0.1, -0.02); box(rifleModel, gunMat, 0.02, 0.05, 0.14, 0, 0.065, -0.06);
 box(rifleModel, gunMat2, 0.06, 0.06, 0.2, 0, -0.005, -0.3);
@@ -301,11 +302,49 @@ rifleModel.position.z = -0.22; pistolModel.position.z = -0.14; // pushed forward
 box(sniperModel, gunMat2, 0.05, 0.07, 0.7, 0, 0, -0.15); box(sniperModel, gunMat, 0.024, 0.024, 0.5, 0, 0.01, -0.72);
 box(sniperModel, gunMat, 0.046, 0.046, 0.26, 0, 0.078, -0.12); box(sniperModel, gunMat2, 0.045, 0.14, 0.06, 0, -0.09, 0.02);
 sniperModel.position.z = -0.22;
-box(revolverModel, gunMat, 0.034, 0.05, 0.22, 0, 0.012, -0.14); box(revolverModel, gunMat2, 0.058, 0.062, 0.07, 0, 0, -0.03);
-box(revolverModel, gunMat2, 0.036, 0.12, 0.05, 0, -0.08, 0.03); revolverModel.position.z = -0.14;
-const gunModels = { t91: rifleModel, t75: pistolModel, t93: sniperModel, rev: revolverModel };
-const MUZZLE_Z = { t91: -0.9, t75: -0.37, t93: -1.2, rev: -0.42 }, GUN_SFX = { t91: 'rifle', t75: 'pistol', t93: 'sniper', rev: 'revolver' };
-gun.add(rifleModel, pistolModel, sniperModel, revolverModel);
+box(magnumModel, gunMat, 0.04, 0.06, 0.25, 0, 0.005, -0.12); box(magnumModel, gunMat2, 0.038, 0.13, 0.055, 0, -0.085, 0.0); magnumModel.position.z = -0.14;
+// The box models above are placeholders: they show until the GLB loads, and stay if a file is missing.
+const gunModels = { m16: rifleModel, m9: pistolModel, m24: sniperModel, deagle: magnumModel };
+const MUZZLE_Z = { m16: -0.9, m9: -0.37, m24: -1.2, deagle: -0.42 }, GUN_SFX = { m16: 'rifle', m9: 'pistol', m24: 'sniper', deagle: 'magnum' };
+const ADS_Y = { m16: -0.105 }; // gun height while aiming, so the sights meet the crosshair; filled in from each GLB
+gun.add(rifleModel, pistolModel, sniperModel, magnumModel);
+
+// GLB view models (assets/models). Every file is 1 unit long along its X axis.
+//   len    real length in metres          muzzle  which way the barrel points along X (+1 or -1)
+//   axis   height of the barrel axis as a fraction of the model's height (it is placed on the gun group's y = 0)
+//   rear   z of the back end of the gun in the gun group (positive is toward the camera)
+//   hip    optional gun position when not aiming (default 0.2, -0.19, -0.42); pistols sit higher and closer
+const VIEW = {
+  m16:    { file: 'M16',         len: 1.00, muzzle:  1, axis: 0.70, rear: 0.40 },
+  m9:     { file: 'Beretta92',   len: 0.22, muzzle:  1, axis: 0.86, rear: 0.02, hip: [0.16, -0.115, -0.36] },
+  m24:    { file: 'M24',         len: 1.10, muzzle: -1, axis: 0.42, rear: 0.42 },
+  deagle: { file: 'DesertEagle', len: 0.27, muzzle: -1, axis: 0.84, rear: 0.03, hip: [0.16, -0.115, -0.36] },
+};
+const HIP_DEFAULT = [0.2, -0.19, -0.42];
+const assetUrl = (p) => './' + p + (window.ASSET_V && window.ASSET_V[p] ? '?v=' + window.ASSET_V[p] : '');
+const gunSteel = new THREE.MeshStandardMaterial({ color: 0x4b5058, roughness: 0.5, metalness: 0 });
+async function loadViewModels() {
+  const loader = new GLTFLoader(), box3 = new THREE.Box3(), c = new THREE.Vector3();
+  await Promise.all(Object.entries(VIEW).map(async ([id, v]) => {
+    try {
+      const model = (await loader.loadAsync(assetUrl(`assets/models/${v.file}.glb`))).scene;
+      model.traverse((o) => {
+        if (!o.isMesh) return;
+        o.frustumCulled = false;
+        if (o.material && o.material.map) { o.material.metalness = 0; o.material.metalnessMap = null; o.material.roughness = Math.max(0.55, o.material.roughness); } // no environment map, so metal would render black
+        else o.material = gunSteel; // untextured grey models get a dark steel finish
+      });
+      const inner = new THREE.Group(); inner.add(model); inner.rotation.y = v.muzzle * Math.PI / 2; inner.scale.setScalar(v.len);
+      inner.updateMatrixWorld(true); box3.setFromObject(inner); box3.getCenter(c);
+      const h = box3.max.y - box3.min.y;
+      inner.position.set(-c.x, -(box3.min.y + h * v.axis), v.rear - box3.max.z);
+      const holder = gunModels[id]; holder.clear(); holder.position.set(0, 0, 0); holder.add(inner);
+      MUZZLE_Z[id] = box3.min.z + inner.position.z;
+      ADS_Y[id] = -(box3.max.y + inner.position.y) - 0.004;
+    } catch (err) { console.warn('view model not loaded, keeping the placeholder:', v.file, err && err.message); }
+  }));
+}
+loadViewModels();
 const muzzle = new THREE.Object3D(); gun.add(muzzle);
 const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc36a, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
 muzzleFlash.scale.setScalar(0.32); muzzleFlash.visible = false; muzzle.add(muzzleFlash);
@@ -447,7 +486,8 @@ function updateWeapons(dt) {
   for (const id in gunModels) gunModels[id].visible = id === w.def.id && !scoped;
   hud.scope.style.display = scoped ? 'block' : 'none'; hud.cross.style.visibility = scoped ? 'hidden' : 'visible';
   const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
-  const tx = ads ? 0 : 0.2, ty = ads ? (P.wi === 0 ? -0.105 : -0.06) : -0.19, tz = ads ? -0.3 : -0.42, k = Math.min(1, 16 * dt);
+  const hip = (VIEW[w.def.id] && VIEW[w.def.id].hip) || HIP_DEFAULT;
+  const tx = ads ? 0 : hip[0], ty = ads ? (ADS_Y[w.def.id] ?? -0.06) : hip[1], tz = ads ? -0.3 : hip[2], k = Math.min(1, 16 * dt);
   gun.position.x += (tx - gun.position.x) * k; gun.position.y += (ty - gun.position.y) * k; gun.position.z += (tz - gun.position.z) * k;
   const bobK = ads ? 0.15 : 1, rl = w.reloadT > 0 ? Math.sin(Math.min(1, (w.def.reload - w.reloadT) / w.def.reload) * Math.PI) : 0;
   gun.position.x += Math.cos(P.bob) * 0.0012 * hs * bobK; gun.position.y += Math.abs(Math.sin(P.bob)) * 0.0012 * hs * bobK;
@@ -809,6 +849,6 @@ setMode('menu');
 requestAnimationFrame(frame);
 
 // Test/debug hook: step() advances the simulation manually when the tab is in the background (rAF throttled)
-window.__game = { S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys, openShop, closeShop, buy, toMenu, switchWeapon, setMode,
+window.__game = { VIEW, loadViewModels, gun, S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys, openShop, closeShop, buy, toMenu, switchWeapon, setMode,
   setFiring: (v) => { firing = v; fireLatch = false; },
   step(n = 1, dt = 1 / 60) { for (let i = 0; i < n && S.mode === 'playing'; i++) { update(dt); updateFx(dt); } sky.position.copy(camera.position); renderer.render(scene, camera); } };
