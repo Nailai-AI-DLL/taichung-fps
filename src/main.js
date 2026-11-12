@@ -236,6 +236,7 @@ const sfx = {
   rifle() { noise(0.55, 0.13, 3200); tone(160, 50, 0.09, 0.4, 'square'); },
   pistol() { noise(0.45, 0.09, 4500); tone(240, 70, 0.06, 0.3, 'square'); },
   sniper() { noise(0.85, 0.4, 1700); tone(130, 34, 0.28, 0.6, 'square'); },
+  revolver() { noise(0.7, 0.2, 2600); tone(190, 45, 0.14, 0.5, 'square'); },
   enemy(d) { const v = 0.35 / (1 + d / 18); noise(v, 0.12, 1700); },
   boom(d = 0) { const v = 1 / (1 + d / 30); noise(0.9 * v, 1.0, 600); tone(90, 28, 0.6, 0.8 * v); },
   hit() { tone(1700, 1500, 0.035, 0.18, 'square'); },
@@ -291,7 +292,7 @@ let firing = false, fireLatch = false, fireQueued = false, edgeTurn = 0; // edge
 // ============================================================ View model (attached to the camera)
 const gun = new THREE.Group(); camera.add(gun);
 const gunMat = lam(0x2e3238), gunMat2 = lam(0x474c40);
-const rifleModel = new THREE.Group(), pistolModel = new THREE.Group(), sniperModel = new THREE.Group();
+const rifleModel = new THREE.Group(), pistolModel = new THREE.Group(), sniperModel = new THREE.Group(), revolverModel = new THREE.Group();
 box(rifleModel, gunMat, 0.055, 0.075, 0.52, 0, 0, -0.1); box(rifleModel, gunMat, 0.028, 0.028, 0.3, 0, 0.008, -0.5);
 box(rifleModel, gunMat2, 0.05, 0.16, 0.07, 0, -0.1, -0.02); box(rifleModel, gunMat, 0.02, 0.05, 0.14, 0, 0.065, -0.06);
 box(rifleModel, gunMat2, 0.06, 0.06, 0.2, 0, -0.005, -0.3);
@@ -300,7 +301,11 @@ rifleModel.position.z = -0.22; pistolModel.position.z = -0.14; // pushed forward
 box(sniperModel, gunMat2, 0.05, 0.07, 0.7, 0, 0, -0.15); box(sniperModel, gunMat, 0.024, 0.024, 0.5, 0, 0.01, -0.72);
 box(sniperModel, gunMat, 0.046, 0.046, 0.26, 0, 0.078, -0.12); box(sniperModel, gunMat2, 0.045, 0.14, 0.06, 0, -0.09, 0.02);
 sniperModel.position.z = -0.22;
-gun.add(rifleModel, pistolModel, sniperModel);
+box(revolverModel, gunMat, 0.034, 0.05, 0.22, 0, 0.012, -0.14); box(revolverModel, gunMat2, 0.058, 0.062, 0.07, 0, 0, -0.03);
+box(revolverModel, gunMat2, 0.036, 0.12, 0.05, 0, -0.08, 0.03); revolverModel.position.z = -0.14;
+const gunModels = { t91: rifleModel, t75: pistolModel, t93: sniperModel, rev: revolverModel };
+const MUZZLE_Z = { t91: -0.9, t75: -0.37, t93: -1.2, rev: -0.42 }, GUN_SFX = { t91: 'rifle', t75: 'pistol', t93: 'sniper', rev: 'revolver' };
+gun.add(rifleModel, pistolModel, sniperModel, revolverModel);
 const muzzle = new THREE.Object3D(); gun.add(muzzle);
 const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc36a, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
 muzzleFlash.scale.setScalar(0.32); muzzleFlash.visible = false; muzzle.add(muzzleFlash);
@@ -426,7 +431,7 @@ function fire() {
   muzzle.getWorldPosition(_v2); _v.copy(o).addScaledVector(_dir, dist); tracer(_v2, _v, false);
   P.pitch = Math.min(1.5, P.pitch + def.recoil * (0.7 + rand() * 0.6) * (P.ads ? 0.7 : 1)); P.yaw += (rand() - 0.5) * def.recoil * 0.7;
   P.bloom = Math.min(1, P.bloom + 0.22); P.kick = 1; flashT = 0.045;
-  def.id === 't91' ? sfx.rifle() : def.id === 't93' ? sfx.sniper() : sfx.pistol();
+  sfx[GUN_SFX[def.id] || 'pistol']();
   return true;
 }
 const ray = new THREE.Raycaster();
@@ -439,7 +444,7 @@ function updateWeapons(dt) {
   else if ((firing || fireQueued) && (w.def.auto || !fireLatch || fireQueued) && fire()) { fireLatch = true; fireQueued = false; }
   // View model pose
   const scoped = !!w.def.scope && P.ads && w.reloadT <= 0 && camera.fov < 30;
-  rifleModel.visible = P.wi === 0; pistolModel.visible = P.wi === 1; sniperModel.visible = P.wi === 2 && !scoped;
+  for (const id in gunModels) gunModels[id].visible = id === w.def.id && !scoped;
   hud.scope.style.display = scoped ? 'block' : 'none'; hud.cross.style.visibility = scoped ? 'hidden' : 'visible';
   const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
   const tx = ads ? 0 : 0.2, ty = ads ? (P.wi === 0 ? -0.105 : -0.06) : -0.19, tz = ads ? -0.3 : -0.42, k = Math.min(1, 16 * dt);
@@ -448,7 +453,7 @@ function updateWeapons(dt) {
   gun.position.x += Math.cos(P.bob) * 0.0012 * hs * bobK; gun.position.y += Math.abs(Math.sin(P.bob)) * 0.0012 * hs * bobK;
   gun.rotation.set(P.kick * 0.05 - rl * 0.7, rl * 0.35, rl * 0.25);
   gun.translateZ(P.kick * 0.035);
-  muzzle.position.set(0, P.wi === 0 ? 0.008 : 0.005, P.wi === 0 ? -0.9 : P.wi === 2 ? -1.2 : -0.37);
+  muzzle.position.set(0, 0.008, MUZZLE_Z[w.def.id] ?? -0.4);
   flashT -= dt; muzzleFlash.visible = flashT > 0; muzzleLight.intensity = flashT > 0 ? 40 : 0;
   if (muzzleFlash.visible) muzzleFlash.material.rotation = rand() * 6;
 }
@@ -621,7 +626,7 @@ function updatePickups(dt) {
     if (k.type === 'ammo') { if (r.reserve >= r.def.maxReserve) continue; const n = Math.min(RULES.ammoPickup, r.def.maxReserve - r.reserve); r.reserve += n; tip('+' + n + ' RIFLE AMMO'); }
     else if (k.type === 'med') { if (P.hp >= PL.hp) continue; P.hp = Math.min(PL.hp, P.hp + RULES.medPickup); tip('+' + RULES.medPickup + ' HEALTH'); }
     else if (r.reserve >= r.def.maxReserve && P.hp >= PL.hp && P.grenades >= PL.maxGrenades) continue;
-    else { r.reserve = Math.min(r.def.maxReserve, r.reserve + RULES.supplyAmmo); P.hp = Math.min(PL.hp, P.hp + RULES.supplyHeal); P.grenades = Math.min(PL.maxGrenades, P.grenades + RULES.supplyGrenades); for (const x of W) if (x.def.price && x.owned) x.reserve = Math.min(x.def.maxReserve, x.reserve + RULES.supplySniper); tip('RESUPPLIED'); }
+    else { r.reserve = Math.min(r.def.maxReserve, r.reserve + RULES.supplyAmmo); P.hp = Math.min(PL.hp, P.hp + RULES.supplyHeal); P.grenades = Math.min(PL.maxGrenades, P.grenades + RULES.supplyGrenades); for (const x of W) if (x.def.supply && x.owned) x.reserve = Math.min(x.def.maxReserve, x.reserve + x.def.supply); tip('RESUPPLIED'); }
     sfx.pick(); scene.remove(m); pickups.splice(i, 1);
   }
 }
@@ -671,12 +676,14 @@ function shopItems() {
   return SHOP.map((it) => {
     const w = W.find((x) => x.def.id === it.weapon); let state = 'buy';
     if (it.type === 'weapon') { if (w.owned) state = 'owned'; }
-    else if (!w.owned) state = 'locked'; else if (w.reserve >= w.def.maxReserve) state = 'full';
+    else if (it.type === 'ammo') { if (!w.owned) state = 'locked'; else if (w.reserve >= w.def.maxReserve) state = 'full'; }
+    else if (it.type === 'grenade') { if (P.grenades >= PL.maxGrenades) state = 'full'; }
+    else if (it.type === 'med') { if (P.hp >= PL.hp) state = 'full'; }
     if (state === 'buy' && S.money < it.price) state = 'poor';
     return { it, w, state };
   });
 }
-const SHOP_LABEL = { buy: 'BUY', owned: 'OWNED', locked: 'NEED THE RIFLE', full: 'FULL', poor: 'NOT ENOUGH' };
+const SHOP_LABEL = { buy: 'BUY', owned: 'OWNED', locked: 'NEED THE WEAPON', full: 'FULL', poor: 'NOT ENOUGH' };
 function renderShop() {
   $('shopMoney').textContent = '$' + S.money.toLocaleString('en-US');
   $('shopList').innerHTML = shopItems().map(({ it, state }) => `<div class="item ${state}"><div><b>${it.name}</b><span>${it.desc}</span></div><div class="price mono">$${it.price.toLocaleString('en-US')}</div><button data-id="${it.id}" ${state === 'buy' ? '' : 'disabled'}>${SHOP_LABEL[state]}</button></div>`).join('');
@@ -686,7 +693,9 @@ function buy(id) {
   if (!r || r.state !== 'buy') return false;
   S.money -= r.it.price;
   if (r.it.type === 'weapon') { r.w.owned = true; r.w.mag = r.w.def.mag; r.w.reserve = r.w.def.reserve; }
-  else r.w.reserve = Math.min(r.w.def.maxReserve, r.w.reserve + r.it.amount);
+  else if (r.it.type === 'ammo') r.w.reserve = Math.min(r.w.def.maxReserve, r.w.reserve + r.it.amount);
+  else if (r.it.type === 'grenade') P.grenades = Math.min(PL.maxGrenades, P.grenades + r.it.amount);
+  else if (r.it.type === 'med') P.hp = Math.min(PL.hp, P.hp + r.it.amount);
   sfx.pick(); renderShop(); return true;
 }
 function openShop() {
@@ -759,9 +768,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && !document.pointerLockElement) { setMode('paused'); firing = false; keys.clear(); return; }
   keys.add(e.code);
   if (e.code === 'KeyR') startReload();
-  else if (e.code === 'Digit1') switchWeapon(0);
-  else if (e.code === 'Digit2') switchWeapon(1);
-  else if (e.code === 'Digit3') { if (W[2].owned) switchWeapon(2); else tip('BUY THE SNIPER IN THE ARMORY — B'); }
+  else if (/^Digit[1-9]$/.test(e.code)) { const w = W[+e.code.slice(5) - 1]; if (w) { if (w.owned) switchWeapon(W.indexOf(w)); else tip('BUY THE ' + w.def.name.toUpperCase() + ' IN THE ARMORY — B'); } }
   else if (e.code === 'KeyB') openShop();
   else if (e.code === 'KeyG') throwGrenade();
 });

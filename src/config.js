@@ -15,14 +15,21 @@ export const WEAPONS = [
   { id: 't75', name: 'T75 Pistol', mag: 15, reserve: Infinity, maxReserve: Infinity, auto: false,
     interval: 0.16, dmg: 36, head: 2.2, spread: 0.008, recoil: 0.02, reload: 1.3, range: 120 },
   // price: bought in the shop instead of owned from the start. scope: full-screen scope overlay when aiming.
+  // supply: rounds added by each supply crate. Number keys follow the order of this list.
   { id: 't93', name: 'T93 Sniper', price: 2000, mag: 5, reserve: 20, maxReserve: 30, auto: false,
-    interval: 1.25, dmg: 230, head: 2.5, spread: 0.035, adsSpread: 0, recoil: 0.045, reload: 2.8, range: 400, scope: true, zoomFov: 16 },
+    interval: 1.25, dmg: 230, head: 2.5, spread: 0.035, adsSpread: 0, recoil: 0.045, reload: 2.8, range: 400, scope: true, zoomFov: 16, supply: 10 },
+  { id: 'rev', name: 'Revolver', price: 1200, mag: 6, reserve: 36, maxReserve: 60, auto: false,
+    interval: 0.38, dmg: 95, head: 2.2, spread: 0.01, recoil: 0.04, reload: 2.4, range: 150, supply: 12 },
 ];
 
 // Shop stock. Kill rewards are ENEMY_TYPES[].score plus RULES.headBonus for a headshot.
 export const SHOP = [
   { id: 't93', type: 'weapon', weapon: 't93', name: 'T93 Sniper Rifle', desc: 'Bolt action, 5 rounds. One shot drops most infantry. Key 3.', price: 2000 },
   { id: 't93ammo', type: 'ammo', weapon: 't93', amount: 10, name: 'Sniper Ammo', desc: '+10 rounds for the T93.', price: 400 },
+  { id: 'rev', type: 'weapon', weapon: 'rev', name: 'Revolver', desc: 'Six heavy rounds. Two body shots or one headshot per rifleman. Key 4.', price: 1200 },
+  { id: 'revammo', type: 'ammo', weapon: 'rev', amount: 12, name: 'Revolver Ammo', desc: '+12 rounds for the revolver.', price: 250 },
+  { id: 'grenade', type: 'grenade', amount: 1, name: 'Grenade', desc: 'One frag grenade. You can carry four.', price: 300 },
+  { id: 'medkit', type: 'med', amount: 50, name: 'Medkit', desc: 'Restores 50 health on the spot.', price: 350 },
 ];
 
 export const GRENADE = { fuse: 2.2, radius: 9, dmg: 170, selfMul: 0.4, throwSpeed: 17 };
@@ -38,7 +45,7 @@ export const RULES = {
   maxAlive: 14, spawnGap: 0.9, intermission: 14, firstDelay: 5,
   dropAmmo: 0.3, dropMed: 0.10,
   ammoPickup: 30, medPickup: 25,
-  supplyAmmo: 180, supplyHeal: 60, supplyGrenades: 2, supplySniper: 10,
+  supplyAmmo: 180, supplyHeal: 60, supplyGrenades: 2,
   headBonus: 50,
 };
 
