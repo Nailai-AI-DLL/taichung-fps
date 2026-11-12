@@ -36,7 +36,7 @@ On Windows and Linux, Ctrl+W closes the browser tab and a page cannot block it, 
 - **Money**: every kill pays a reward, with a bonus for headshots. Press B at any time and anywhere to open the armory, which pauses the fight. It sells the sniper rifle, the Desert Eagle, ammo for both, grenades, and medkits.
 - **Enemies**: riflemen, assault troops, heavy machine gunners, and kamikaze drones. There are 120 across the six waves.
 - **Between waves**: a supply crate appears at the command post with ammo, health, and grenades.
-- **Art and audio**: low-poly scenery with canvas-generated textures, GLB weapon models in first person, and sound synthesized with Web Audio.
+- **Art and audio**: low-poly scenery with canvas-generated textures, GLB weapon models held by box-built arms in first person, and sound synthesized with Web Audio.
 
 ## Files
 
@@ -81,7 +81,7 @@ This rewrites the import map in `index.html` so each module URL carries a hash o
    - `__game.spawnEnemy({type:'heavy',dir:'N'})` spawns an enemy.
    - `__game.S` shows the game state.
 4. To add an enemy type, add an entry to `ENEMY_TYPES` and use it in `WAVES[].units`. Its appearance is built in `spawnEnemy` in `main.js`.
-5. To swap or add a weapon model, put the GLB in `assets/models/` and edit the `VIEW` table in `main.js` (file name, real length, which way the barrel points, barrel height). Check it first in `tools/viewer.html`.
+5. To swap or add a weapon model, put the GLB in `assets/models/` and edit the `VIEW` table in `main.js` (file name, real length, which way the barrel points, barrel height). Check it first in `tools/viewer.html`. The hands are placed per weapon in the `ARMS` table (hand and elbow points).
 6. To sell a new weapon, add it to `WEAPONS` with a `price` and add a matching entry to `SHOP`. Its view model and sound are in `main.js`.
 7. To add a wave, add an entry to `WAVES`. `dirs` accepts N, E, W, and S. No code changes are needed.
 

@@ -345,6 +345,27 @@ async function loadViewModels() {
   }));
 }
 loadViewModels();
+
+// First-person arms: box sleeves and gloves, one rig per weapon, attached to the gun so they follow recoil, reload, and aiming.
+// Each entry is [hand, elbow] in gun-group space: the glove sits at the hand and the sleeve runs toward the elbow (off screen).
+const ARMS = {
+  m16:    { r: [[0.012, -0.085, 0.085], [0.13, -0.3, 0.5]],  l: [[-0.005, -0.075, -0.235], [-0.42, -0.3, 0.4]] },
+  m24:    { r: [[0.012, -0.075, 0.07],  [0.13, -0.3, 0.5]],  l: [[-0.005, -0.06, -0.2],    [-0.42, -0.3, 0.4]] },
+  m9:     { r: [[0.004, -0.08, 0.0],    [0.16, -0.3, 0.4]],   l: [[-0.045, -0.115, -0.005], [-0.4, -0.33, 0.34]] },
+  deagle: { r: [[0.004, -0.085, 0.0],   [0.16, -0.3, 0.4]],   l: [[-0.045, -0.12, -0.005],  [-0.4, -0.33, 0.34]] },
+};
+// A little emissive keeps the arms readable when the camera faces away from the sun
+const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x5c6f47, emissive: 0x1c2415 }), gloveMat = new THREE.MeshLambertMaterial({ color: 0x3b3f37, emissive: 0x121310 }), armRigs = {};
+function buildArm(parent, hand, elbow) {
+  const g = new THREE.Group(), e = new THREE.Vector3(...elbow);
+  g.position.set(...hand); g.lookAt(e); // built before it has a parent, so local and world space agree
+  const L = g.position.distanceTo(e);
+  box(g, gloveMat, 0.07, 0.078, 0.11, 0, 0, 0.03);
+  box(g, sleeveMat, 0.084, 0.084, L - 0.085, 0, 0, 0.085 + (L - 0.085) / 2);
+  box(g, gloveMat, 0.09, 0.09, 0.025, 0, 0, 0.092); // cuff
+  parent.add(g);
+}
+for (const id in ARMS) { const rig = armRigs[id] = new THREE.Group(); buildArm(rig, ...ARMS[id].r); buildArm(rig, ...ARMS[id].l); rig.visible = false; gun.add(rig); }
 const muzzle = new THREE.Object3D(); gun.add(muzzle);
 const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc36a, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
 muzzleFlash.scale.setScalar(0.32); muzzleFlash.visible = false; muzzle.add(muzzleFlash);
@@ -483,7 +504,7 @@ function updateWeapons(dt) {
   else if ((firing || fireQueued) && (w.def.auto || !fireLatch || fireQueued) && fire()) { fireLatch = true; fireQueued = false; }
   // View model pose
   const scoped = !!w.def.scope && P.ads && w.reloadT <= 0 && camera.fov < 30;
-  for (const id in gunModels) gunModels[id].visible = id === w.def.id && !scoped;
+  for (const id in gunModels) { const on = id === w.def.id && !scoped; gunModels[id].visible = on; if (armRigs[id]) armRigs[id].visible = on; }
   hud.scope.style.display = scoped ? 'block' : 'none'; hud.cross.style.visibility = scoped ? 'hidden' : 'visible';
   const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
   const hip = (VIEW[w.def.id] && VIEW[w.def.id].hip) || HIP_DEFAULT;
