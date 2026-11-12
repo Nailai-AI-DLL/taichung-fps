@@ -14,6 +14,15 @@ export const WEAPONS = [
     interval: 0.085, dmg: 27, head: 2.4, spread: 0.011, recoil: 0.012, reload: 2.0, range: 300 },
   { id: 't75', name: 'T75 Pistol', mag: 15, reserve: Infinity, maxReserve: Infinity, auto: false,
     interval: 0.16, dmg: 36, head: 2.2, spread: 0.008, recoil: 0.02, reload: 1.3, range: 120 },
+  // price: bought in the shop instead of owned from the start. scope: full-screen scope overlay when aiming.
+  { id: 't93', name: 'T93 Sniper', price: 2000, mag: 5, reserve: 20, maxReserve: 30, auto: false,
+    interval: 1.25, dmg: 230, head: 2.5, spread: 0.035, adsSpread: 0, recoil: 0.045, reload: 2.8, range: 400, scope: true, zoomFov: 16 },
+];
+
+// Shop stock. Kill rewards are ENEMY_TYPES[].score plus RULES.headBonus for a headshot.
+export const SHOP = [
+  { id: 't93', type: 'weapon', weapon: 't93', name: 'T93 Sniper Rifle', desc: 'Bolt action, 5 rounds. One shot drops most infantry. Key 3.', price: 2000 },
+  { id: 't93ammo', type: 'ammo', weapon: 't93', amount: 10, name: 'Sniper Ammo', desc: '+10 rounds for the T93.', price: 400 },
 ];
 
 export const GRENADE = { fuse: 2.2, radius: 9, dmg: 170, selfMul: 0.4, throwSpeed: 17 };
@@ -29,7 +38,8 @@ export const RULES = {
   maxAlive: 14, spawnGap: 0.9, intermission: 14, firstDelay: 5,
   dropAmmo: 0.3, dropMed: 0.10,
   ammoPickup: 30, medPickup: 25,
-  supplyAmmo: 180, supplyHeal: 60, supplyGrenades: 2,
+  supplyAmmo: 180, supplyHeal: 60, supplyGrenades: 2, supplySniper: 10,
+  headBonus: 50,
 };
 
 // dirs: N = Taiwan Blvd, E = Wenxin Rd, W = Huilai Rd, S = Shizheng S 1st Rd

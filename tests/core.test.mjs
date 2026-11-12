@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { segAABB, raycastWorld, resolveCircle, groundAt, buildGrid, flowField, nextCell, cellIx, GRID_N, mulberry32 } from '../src/core.js';
 import { buildMap } from '../src/map.js';
-import { WAVES, ENEMY_TYPES, expandWave } from '../src/config.js';
+import { WAVES, ENEMY_TYPES, WEAPONS, SHOP, expandWave } from '../src/config.js';
 
 const box = { minX: 0, maxX: 2, minY: 0, maxY: 2, minZ: 0, maxZ: 2 };
 
@@ -89,4 +89,17 @@ test('walking simulation: a soldier from any spawn point can physically reach th
     }
   }
   assert.equal(fails.length, 0, `${fails.length} routes got stuck, e.g.\n` + fails.slice(0, 8).join('\n'));
+});
+
+test('shop: every item points at a real weapon, and priced weapons are sold exactly once', () => {
+  for (const it of SHOP) {
+    const w = WEAPONS.find((x) => x.id === it.weapon);
+    assert.ok(w, `${it.id} refers to an unknown weapon`);
+    assert.ok(it.price > 0 && Number.isFinite(it.price));
+    if (it.type === 'weapon') assert.equal(it.price, w.price, `${it.id} price differs from WEAPONS`);
+    else assert.ok(it.amount > 0 && w.maxReserve !== Infinity);
+  }
+  for (const w of WEAPONS.filter((x) => x.price)) assert.equal(SHOP.filter((it) => it.type === 'weapon' && it.weapon === w.id).length, 1);
+  assert.ok(WEAPONS.some((w) => !w.price), 'the player must start with at least one weapon');
+  for (const e of Object.values(ENEMY_TYPES)) assert.ok(e.score > 0, 'every enemy pays a reward');
 });

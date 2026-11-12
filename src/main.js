@@ -1,7 +1,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { raycastWorld, resolveCircle, groundAt, buildGrid, flowField, flowTarget, cellIx, GRID_N, lerpAngle } from './core.js';
 import { buildMap } from './map.js';
-import { PLAYER as PL, WEAPONS, GRENADE, ENEMY_TYPES, RULES, WAVES, STORY, expandWave } from './config.js';
+import { PLAYER as PL, WEAPONS, SHOP, GRENADE, ENEMY_TYPES, RULES, WAVES, STORY, expandWave } from './config.js';
 
 const $ = (id) => document.getElementById(id);
 const NOLOCK = new URLSearchParams(location.search).has('nolock'); // for automated tests: do not pause when pointer lock is lost
@@ -235,6 +235,7 @@ function tone(f0, f1, dur, vol, type = 'sine') {
 const sfx = {
   rifle() { noise(0.55, 0.13, 3200); tone(160, 50, 0.09, 0.4, 'square'); },
   pistol() { noise(0.45, 0.09, 4500); tone(240, 70, 0.06, 0.3, 'square'); },
+  sniper() { noise(0.85, 0.4, 1700); tone(130, 34, 0.28, 0.6, 'square'); },
   enemy(d) { const v = 0.35 / (1 + d / 18); noise(v, 0.12, 1700); },
   boom(d = 0) { const v = 1 / (1 + d / 30); noise(0.9 * v, 1.0, 600); tone(90, 28, 0.6, 0.8 * v); },
   hit() { tone(1700, 1500, 0.035, 0.18, 'square'); },
@@ -280,7 +281,7 @@ function updateFx(dt) {
 }
 
 // ============================================================ State
-const S = { mode: 'menu', wave: -1, queue: [], spawnT: 0, interT: 0, time: 0, kills: 0, heads: 0, shots: 0, hits: 0, flowT: 0, alive: 0 };
+const S = { mode: 'menu', wave: -1, queue: [], spawnT: 0, interT: 0, time: 0, kills: 0, heads: 0, shots: 0, hits: 0, flowT: 0, alive: 0, money: 0, earned: 0 };
 const P = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: 0, hp: PL.hp, eye: PL.eye, crouch: false, onGround: true, lastHurt: -99, wi: 0, grenades: PL.grenades, ads: false, bloom: 0, bob: 0, kick: 0 };
 let W = [];
 const enemies = [], hitMeshes = [], pickups = [], grenades = [];
@@ -290,13 +291,16 @@ let firing = false, fireLatch = false, fireQueued = false, edgeTurn = 0; // edge
 // ============================================================ View model (attached to the camera)
 const gun = new THREE.Group(); camera.add(gun);
 const gunMat = lam(0x2e3238), gunMat2 = lam(0x474c40);
-const rifleModel = new THREE.Group(), pistolModel = new THREE.Group();
+const rifleModel = new THREE.Group(), pistolModel = new THREE.Group(), sniperModel = new THREE.Group();
 box(rifleModel, gunMat, 0.055, 0.075, 0.52, 0, 0, -0.1); box(rifleModel, gunMat, 0.028, 0.028, 0.3, 0, 0.008, -0.5);
 box(rifleModel, gunMat2, 0.05, 0.16, 0.07, 0, -0.1, -0.02); box(rifleModel, gunMat, 0.02, 0.05, 0.14, 0, 0.065, -0.06);
 box(rifleModel, gunMat2, 0.06, 0.06, 0.2, 0, -0.005, -0.3);
 box(pistolModel, gunMat, 0.04, 0.055, 0.22, 0, 0, -0.1); box(pistolModel, gunMat2, 0.038, 0.13, 0.055, 0, -0.08, -0.02);
 rifleModel.position.z = -0.22; pistolModel.position.z = -0.14; // pushed forward so the stock does not fill the screen
-gun.add(rifleModel, pistolModel);
+box(sniperModel, gunMat2, 0.05, 0.07, 0.7, 0, 0, -0.15); box(sniperModel, gunMat, 0.024, 0.024, 0.5, 0, 0.01, -0.72);
+box(sniperModel, gunMat, 0.046, 0.046, 0.26, 0, 0.078, -0.12); box(sniperModel, gunMat2, 0.045, 0.14, 0.06, 0, -0.09, 0.02);
+sniperModel.position.z = -0.22;
+gun.add(rifleModel, pistolModel, sniperModel);
 const muzzle = new THREE.Object3D(); gun.add(muzzle);
 const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc36a, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
 muzzleFlash.scale.setScalar(0.32); muzzleFlash.visible = false; muzzle.add(muzzleFlash);
@@ -304,7 +308,7 @@ const muzzleLight = new THREE.PointLight(0xffb060, 0, 22); camera.add(muzzleLigh
 let flashT = 0;
 
 // ============================================================ HUD
-const hud = { hpbar: $('hpbar'), hpfill: $('hpbar').firstElementChild, hpnum: $('hpnum'), ammo: $('ammo'), wname: $('wname'), gren: $('gren'), wave: $('wave'), left: $('left'), banner: $('banner'), radio: $('radio'), rtext: $('radiotext'), hit: $('hit'), vign: $('vign'), dmg: $('dmgdir'), cross: $('cross'), feed: $('feed'), tip: $('tip') };
+const hud = { hpbar: $('hpbar'), hpfill: $('hpbar').firstElementChild, hpnum: $('hpnum'), ammo: $('ammo'), wname: $('wname'), gren: $('gren'), money: $('money'), scope: $('scope'), wave: $('wave'), left: $('left'), banner: $('banner'), radio: $('radio'), rtext: $('radiotext'), hit: $('hit'), vign: $('vign'), dmg: $('dmgdir'), cross: $('cross'), feed: $('feed'), tip: $('tip') };
 const mapCtx = $('map').getContext('2d');
 let bannerT = 0, radioT = 0, hitT = 0, vignT = 0, dmgT = 0, dmgAng = 0, tipT = 0;
 function banner(big, small, dur = 3.2) { hud.banner.firstElementChild.textContent = big; hud.banner.lastElementChild.textContent = small; hud.banner.style.opacity = 1; bannerT = dur; }
@@ -320,6 +324,7 @@ function updateHud(dt) {
   hud.ammo.innerHTML = `<b>${w.mag}</b> / ${w.reserve === Infinity ? '∞' : w.reserve}`;
   hud.ammo.classList.toggle('low', w.mag <= w.def.mag * 0.2);
   hud.gren.textContent = 'GRENADES × ' + P.grenades;
+  hud.money.textContent = '$' + S.money.toLocaleString('en-US');
   hud.wave.textContent = S.wave < 0 ? 'STAND BY' : `WAVE ${S.wave + 1} / ${WAVES.length}`;
   hud.left.textContent = S.interT > 0 ? `NEXT WAVE IN ${Math.ceil(S.interT)}s` : `HOSTILES ${S.alive + S.queue.length}`;
   hud.cross.style.setProperty('--gap', (P.ads ? 0 : 4 + P.bloom * 9 + Math.hypot(P.vel.x, P.vel.z) * 0.9) + 'px');
@@ -374,7 +379,7 @@ function updatePlayer(dt) {
   if (S.time - P.lastHurt > PL.regenDelay && P.hp < PL.regenCap) P.hp = Math.min(PL.regenCap, P.hp + PL.regenRate * dt);
   camera.position.set(P.pos.x, P.pos.y + P.eye + Math.sin(P.bob * 2) * 0.035 * Math.min(1, hs / 5), P.pos.z);
   camera.rotation.set(P.pitch, P.yaw, 0);
-  const fov = P.ads ? 48 : sprint ? 80 : 75;
+  const cw = W[P.wi], fov = P.ads && cw.reloadT <= 0 ? (cw.def.zoomFov || 48) : sprint ? 80 : 75;
   if (Math.abs(camera.fov - fov) > 0.1) { camera.fov += (fov - camera.fov) * Math.min(1, 14 * dt); camera.updateProjectionMatrix(); }
   camera.updateMatrixWorld();
 }
@@ -389,8 +394,8 @@ function damagePlayer(dmg, sx, sz) {
 }
 
 // ============================================================ Weapons
-function resetWeapons() { W = WEAPONS.map((def) => ({ def, mag: def.mag, reserve: def.reserve, cool: 0, reloadT: 0 })); P.wi = 0; }
-function switchWeapon(i) { if (i === P.wi || !W[i]) return; W[P.wi].reloadT = 0; P.wi = i; W[i].cool = 0.25; P.kick = 0.5; }
+function resetWeapons() { W = WEAPONS.map((def) => ({ def, mag: def.mag, reserve: def.reserve, cool: 0, reloadT: 0, owned: !def.price })); P.wi = 0; }
+function switchWeapon(i) { if (i === P.wi || !W[i] || !W[i].owned) return; W[P.wi].reloadT = 0; P.wi = i; W[i].cool = 0.25; P.kick = 0.5; }
 function startReload() {
   const w = W[P.wi];
   if (w.reloadT > 0 || w.mag >= w.def.mag || w.reserve <= 0) return;
@@ -404,7 +409,7 @@ function fire() {
   camera.getWorldDirection(_dir);
   _right.setFromMatrixColumn(camera.matrixWorld, 0); _up.setFromMatrixColumn(camera.matrixWorld, 1);
   const moving = Math.hypot(P.vel.x, P.vel.z) > 1.5;
-  const sp = def.spread * (P.ads ? 0.3 : 1) * (moving ? 1.7 : 1) * (P.crouch ? 0.7 : 1) * (1 + P.bloom * 2.2) * (P.onGround ? 1 : 2.5);
+  const sp = def.spread * (P.ads ? (def.adsSpread ?? 0.3) : 1) * (moving ? 1.7 : 1) * (P.crouch ? 0.7 : 1) * (1 + P.bloom * 2.2) * (P.onGround ? 1 : 2.5);
   const a = rand() * Math.PI * 2, r = Math.sqrt(rand()) * sp;
   _dir.addScaledVector(_right, Math.cos(a) * r).addScaledVector(_up, Math.sin(a) * r).normalize();
   const o = camera.position;
@@ -421,7 +426,7 @@ function fire() {
   muzzle.getWorldPosition(_v2); _v.copy(o).addScaledVector(_dir, dist); tracer(_v2, _v, false);
   P.pitch = Math.min(1.5, P.pitch + def.recoil * (0.7 + rand() * 0.6) * (P.ads ? 0.7 : 1)); P.yaw += (rand() - 0.5) * def.recoil * 0.7;
   P.bloom = Math.min(1, P.bloom + 0.22); P.kick = 1; flashT = 0.045;
-  def.id === 't91' ? sfx.rifle() : sfx.pistol();
+  def.id === 't91' ? sfx.rifle() : def.id === 't93' ? sfx.sniper() : sfx.pistol();
   return true;
 }
 const ray = new THREE.Raycaster();
@@ -433,7 +438,9 @@ function updateWeapons(dt) {
   if (w.reloadT > 0) fireQueued = false;
   else if ((firing || fireQueued) && (w.def.auto || !fireLatch || fireQueued) && fire()) { fireLatch = true; fireQueued = false; }
   // View model pose
-  rifleModel.visible = P.wi === 0; pistolModel.visible = P.wi === 1;
+  const scoped = !!w.def.scope && P.ads && w.reloadT <= 0 && camera.fov < 30;
+  rifleModel.visible = P.wi === 0; pistolModel.visible = P.wi === 1; sniperModel.visible = P.wi === 2 && !scoped;
+  hud.scope.style.display = scoped ? 'block' : 'none'; hud.cross.style.visibility = scoped ? 'hidden' : 'visible';
   const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
   const tx = ads ? 0 : 0.2, ty = ads ? (P.wi === 0 ? -0.105 : -0.06) : -0.19, tz = ads ? -0.3 : -0.42, k = Math.min(1, 16 * dt);
   gun.position.x += (tx - gun.position.x) * k; gun.position.y += (ty - gun.position.y) * k; gun.position.z += (tz - gun.position.z) * k;
@@ -441,7 +448,7 @@ function updateWeapons(dt) {
   gun.position.x += Math.cos(P.bob) * 0.0012 * hs * bobK; gun.position.y += Math.abs(Math.sin(P.bob)) * 0.0012 * hs * bobK;
   gun.rotation.set(P.kick * 0.05 - rl * 0.7, rl * 0.35, rl * 0.25);
   gun.translateZ(P.kick * 0.035);
-  muzzle.position.set(0, P.wi === 0 ? 0.008 : 0.005, P.wi === 0 ? -0.9 : -0.37);
+  muzzle.position.set(0, P.wi === 0 ? 0.008 : 0.005, P.wi === 0 ? -0.9 : P.wi === 2 ? -1.2 : -0.37);
   flashT -= dt; muzzleFlash.visible = flashT > 0; muzzleLight.intensity = flashT > 0 ? 40 : 0;
   if (muzzleFlash.visible) muzzleFlash.material.rotation = rand() * 6;
 }
@@ -530,7 +537,8 @@ function killEnemy(e, head, silent) {
   if (e.drone) { if (!silent) explode(e.group.position, 0, 0, false); scene.remove(e.group); e.gone = true; }
   if (silent) return;
   S.kills++; if (head) S.heads++; sfx.kill();
-  feed((head ? 'HEADSHOT — ' : 'KILLED — ') + e.def.name, head);
+  const pay = e.def.score + (head ? RULES.headBonus : 0); S.money += pay; S.earned += pay;
+  feed((head ? 'HEADSHOT — ' : 'KILLED — ') + e.def.name + '  +$' + pay, head);
   if (!e.drone) {
     const r = rand();
     if (r < RULES.dropAmmo) addPickup('ammo', e.group.position.x, e.group.position.z);
@@ -613,7 +621,7 @@ function updatePickups(dt) {
     if (k.type === 'ammo') { if (r.reserve >= r.def.maxReserve) continue; const n = Math.min(RULES.ammoPickup, r.def.maxReserve - r.reserve); r.reserve += n; tip('+' + n + ' RIFLE AMMO'); }
     else if (k.type === 'med') { if (P.hp >= PL.hp) continue; P.hp = Math.min(PL.hp, P.hp + RULES.medPickup); tip('+' + RULES.medPickup + ' HEALTH'); }
     else if (r.reserve >= r.def.maxReserve && P.hp >= PL.hp && P.grenades >= PL.maxGrenades) continue;
-    else { r.reserve = Math.min(r.def.maxReserve, r.reserve + RULES.supplyAmmo); P.hp = Math.min(PL.hp, P.hp + RULES.supplyHeal); P.grenades = Math.min(PL.maxGrenades, P.grenades + RULES.supplyGrenades); tip('RESUPPLIED'); }
+    else { r.reserve = Math.min(r.def.maxReserve, r.reserve + RULES.supplyAmmo); P.hp = Math.min(PL.hp, P.hp + RULES.supplyHeal); P.grenades = Math.min(PL.maxGrenades, P.grenades + RULES.supplyGrenades); for (const x of W) if (x.def.price && x.owned) x.reserve = Math.min(x.def.maxReserve, x.reserve + RULES.supplySniper); tip('RESUPPLIED'); }
     sfx.pick(); scene.remove(m); pickups.splice(i, 1);
   }
 }
@@ -629,7 +637,7 @@ function updateWaves(dt) {
   if (S.queue.length) { if ((S.spawnT -= dt) <= 0 && S.alive < RULES.maxAlive) { spawnEnemy(S.queue.pop()); S.spawnT = RULES.spawnGap; } }
   else if (S.alive === 0) {
     if (S.wave >= WAVES.length - 1) { endGame(true); return; }
-    S.interT = RULES.intermission; banner('REPELLED', `WAVE ${S.wave + 1}`, 2.5); radio(STORY.supply, 6);
+    S.interT = RULES.intermission; banner('REPELLED', `WAVE ${S.wave + 1}`, 2.5); radio(STORY.supply, 6); tip('PRESS B — ARMORY');
     if (!pickups.some((p) => p.type === 'supply')) addPickup('supply', MAP.supply.x, MAP.supply.z);
   }
 }
@@ -639,16 +647,59 @@ function setMode(m) {
   S.mode = m;
   $('menu').classList.toggle('hidden', m !== 'menu'); $('pause').classList.toggle('hidden', m !== 'paused');
   $('end').classList.toggle('hidden', m !== 'dead' && m !== 'won'); $('hud').classList.toggle('hidden', m === 'menu');
+  $('shop').classList.toggle('hidden', m !== 'shop');
+  if (m !== 'playing') hud.scope.style.display = 'none';
   gun.visible = m !== 'menu';
 }
 let lockFailed = false;
 function lock() { if (NOLOCK) return; try { const r = renderer.domElement.requestPointerLock(); if (r && r.catch) r.catch(() => { lockFailed = true; }); } catch { lockFailed = true; /* still playable without pointer lock */ } }
-function startGame() {
-  initAudio();
+function clearWorld() {
   for (const e of enemies) scene.remove(e.group); enemies.length = 0; hitMeshes.length = 0;
   for (const p of pickups) scene.remove(p.mesh); pickups.length = 0;
   for (const g of grenades) scene.remove(g.m); grenades.length = 0;
-  Object.assign(S, { wave: -1, queue: [], spawnT: 0, interT: RULES.firstDelay, time: 0, kills: 0, heads: 0, shots: 0, hits: 0, flowT: 0, alive: 0 });
+  for (const l of tracers) l.visible = false; for (const s of flashes) s.visible = false;
+}
+function toMenu() {
+  clearWorld(); firing = false; keys.clear(); P.ads = false;
+  camera.fov = 75; camera.updateProjectionMatrix();
+  if (document.pointerLockElement) document.exitPointerLock();
+  setMode('menu');
+}
+
+// ---- Shop: kills pay money (ENEMY_TYPES[].score); B opens the shop, which pauses the fight
+function shopItems() {
+  return SHOP.map((it) => {
+    const w = W.find((x) => x.def.id === it.weapon); let state = 'buy';
+    if (it.type === 'weapon') { if (w.owned) state = 'owned'; }
+    else if (!w.owned) state = 'locked'; else if (w.reserve >= w.def.maxReserve) state = 'full';
+    if (state === 'buy' && S.money < it.price) state = 'poor';
+    return { it, w, state };
+  });
+}
+const SHOP_LABEL = { buy: 'BUY', owned: 'OWNED', locked: 'NEED THE RIFLE', full: 'FULL', poor: 'NOT ENOUGH' };
+function renderShop() {
+  $('shopMoney').textContent = '$' + S.money.toLocaleString('en-US');
+  $('shopList').innerHTML = shopItems().map(({ it, state }) => `<div class="item ${state}"><div><b>${it.name}</b><span>${it.desc}</span></div><div class="price mono">$${it.price.toLocaleString('en-US')}</div><button data-id="${it.id}" ${state === 'buy' ? '' : 'disabled'}>${SHOP_LABEL[state]}</button></div>`).join('');
+}
+function buy(id) {
+  const r = shopItems().find((x) => x.it.id === id);
+  if (!r || r.state !== 'buy') return false;
+  S.money -= r.it.price;
+  if (r.it.type === 'weapon') { r.w.owned = true; r.w.mag = r.w.def.mag; r.w.reserve = r.w.def.reserve; }
+  else r.w.reserve = Math.min(r.w.def.maxReserve, r.w.reserve + r.it.amount);
+  sfx.pick(); renderShop(); return true;
+}
+function openShop() {
+  if (S.mode !== 'playing') return;
+  firing = false; keys.clear(); P.ads = false; setMode('shop'); renderShop();
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+function closeShop() { if (S.mode !== 'shop') return; setMode('playing'); last = performance.now(); lock(); }
+
+function startGame() {
+  initAudio();
+  clearWorld();
+  Object.assign(S, { wave: -1, queue: [], spawnT: 0, interT: RULES.firstDelay, time: 0, kills: 0, heads: 0, shots: 0, hits: 0, flowT: 0, alive: 0, money: 0, earned: 0 });
   P.pos.set(MAP.playerStart.x, 0, MAP.playerStart.z); P.vel.set(0, 0, 0);
   Object.assign(P, { yaw: 0, pitch: 0, hp: PL.hp, eye: PL.eye, lastHurt: -99, grenades: PL.grenades, ads: false, bloom: 0, kick: 0 });
   resetWeapons(); firing = false; keys.clear();
@@ -700,6 +751,7 @@ function frame(now) {
 
 // ============================================================ Input
 addEventListener('keydown', (e) => {
+  if (S.mode === 'shop') { if (!e.repeat && (e.code === 'KeyB' || e.code === 'Escape')) { e.preventDefault(); closeShop(); } return; }
   if (S.mode !== 'playing') return;
   // Ctrl is crouch, so stop Ctrl+S / Ctrl+D / Ctrl+A from opening browser dialogs (Ctrl+W cannot be blocked by a page)
   if (e.ctrlKey || ['Space', 'Tab', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
@@ -709,6 +761,8 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') startReload();
   else if (e.code === 'Digit1') switchWeapon(0);
   else if (e.code === 'Digit2') switchWeapon(1);
+  else if (e.code === 'Digit3') { if (W[2].owned) switchWeapon(2); else tip('BUY THE SNIPER IN THE ARMORY — B'); }
+  else if (e.code === 'KeyB') openShop();
   else if (e.code === 'KeyG') throwGrenade();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
@@ -716,18 +770,18 @@ addEventListener('blur', () => { keys.clear(); firing = false; });
 addEventListener('mousemove', (e) => {
   if (S.mode !== 'playing') return; // look still works without pointer lock (fallback)
   const ex = e.clientX / innerWidth; edgeTurn = document.pointerLockElement ? 0 : ex < 0.12 ? -(1 - ex / 0.12) : ex > 0.88 ? (ex - 0.88) / 0.12 : 0;
-  const s = 0.0022 * (P.ads ? 0.55 : 1);
+  const s = 0.0022 * Math.min(1, camera.fov / 75) * (P.ads ? 0.85 : 1); // slower when zoomed in
   P.yaw -= e.movementX * s; P.pitch = Math.max(-1.5, Math.min(1.5, P.pitch - e.movementY * s));
 });
 addEventListener('mousedown', (e) => {
   if (S.mode !== 'playing') return;
-  if (!NOLOCK && !lockFailed && document.pointerLockElement !== renderer.domElement) lock(); // retry the lock, but never swallow the click
+  if (!NOLOCK && document.pointerLockElement !== renderer.domElement) lock(); // retry the lock, but never swallow the click
   if (e.button === 0) { firing = true; fireLatch = false; fireQueued = true; } else if (e.button === 2) P.ads = true;
 });
 addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; else if (e.button === 2) P.ads = false; });
 addEventListener('contextmenu', (e) => e.preventDefault());
 let wheelT = 0;
-addEventListener('wheel', () => { const t = performance.now(); if (S.mode === 'playing' && t - wheelT > 300) { wheelT = t; switchWeapon(1 - P.wi); } }, { passive: true });
+addEventListener('wheel', () => { const t = performance.now(); if (S.mode === 'playing' && t - wheelT > 300) { wheelT = t; let i = P.wi; do { i = (i + 1) % W.length; } while (!W[i].owned); switchWeapon(i); } }, { passive: true });
 document.addEventListener('pointerlockerror', () => { if (!lockFailed) { lockFailed = true; tip('MOUSE LOCK UNAVAILABLE — TRY CHROME'); } });
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement) lockFailed = false;
@@ -738,12 +792,16 @@ document.addEventListener('pointerlockchange', () => {
 document.addEventListener('visibilitychange', () => { if (document.hidden && S.mode === 'playing' && !NOLOCK) { if (document.pointerLockElement) document.exitPointerLock(); else setMode('paused'); } });
 $('btnStart').addEventListener('click', startGame);
 $('btnRestart').addEventListener('click', startGame);
+$('btnMenu').addEventListener('click', toMenu);
+$('btnEndMenu').addEventListener('click', toMenu);
+$('btnShopClose').addEventListener('click', closeShop);
+$('shopList').addEventListener('click', (e) => { const b = e.target.closest('button[data-id]'); if (b) buy(b.dataset.id); });
 $('btnResume').addEventListener('click', () => { if (NOLOCK || lockFailed) { setMode('playing'); last = performance.now(); } else lock(); });
 
 setMode('menu');
 requestAnimationFrame(frame);
 
 // Test/debug hook: step() advances the simulation manually when the tab is in the background (rAF throttled)
-window.__game = { S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys,
+window.__game = { S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys, openShop, closeShop, buy, toMenu, switchWeapon, setMode,
   setFiring: (v) => { firing = v; fireLatch = false; },
   step(n = 1, dt = 1 / 60) { for (let i = 0; i < n && S.mode === 'playing'; i++) { update(dt); updateFx(dt); } sky.position.copy(camera.position); renderer.render(scene, camera); } };
