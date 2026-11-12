@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>七期防線</title>
+<style>
+:root{--amber:#ffb347;--red:#ff5a4a;--ink:#0b0e12;--pale:#e9e4d8;--line:rgba(233,228,216,.22)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--ink);color:var(--pale);
+  font-family:"PingFang TC","Noto Sans TC","Microsoft JhengHei",system-ui,sans-serif;user-select:none;-webkit-user-select:none}
+#game,#game canvas{position:fixed;inset:0;display:block}
+.hidden{display:none!important}
+.mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+
+/* ---------- HUD ---------- */
+#hud{position:fixed;inset:0;pointer-events:none}
+#cross{position:absolute;left:50%;top:50%;width:0;height:0}
+#cross i{position:absolute;background:var(--pale);box-shadow:0 0 2px #000}
+#cross i:nth-child(1){left:-1px;top:calc(-14px - var(--gap,0px));width:2px;height:8px}
+#cross i:nth-child(2){left:-1px;top:calc(6px + var(--gap,0px));width:2px;height:8px}
+#cross i:nth-child(3){top:-1px;left:calc(-14px - var(--gap,0px));height:2px;width:8px}
+#cross i:nth-child(4){top:-1px;left:calc(6px + var(--gap,0px));height:2px;width:8px}
+#cross::after{content:"";position:absolute;left:-1px;top:-1px;width:2px;height:2px;background:var(--amber)}
+#hit{position:absolute;left:50%;top:50%;width:26px;height:26px;margin:-13px;opacity:0;transform:rotate(45deg);
+  background:linear-gradient(var(--pale),var(--pale)) center/2px 100% no-repeat,linear-gradient(var(--pale),var(--pale)) center/100% 2px no-repeat;
+  -webkit-mask:radial-gradient(circle,transparent 5px,#000 6px);mask:radial-gradient(circle,transparent 5px,#000 6px)}
+#hit.head{background:linear-gradient(var(--red),var(--red)) center/3px 100% no-repeat,linear-gradient(var(--red),var(--red)) center/100% 3px no-repeat}
+#vign{position:absolute;inset:0;opacity:0;background:radial-gradient(ellipse at center,transparent 45%,rgba(190,20,10,.75) 100%)}
+#dmgdir{position:absolute;left:50%;top:50%;width:0;height:0;opacity:0}
+#dmgdir b{position:absolute;left:-46px;top:-150px;width:92px;height:22px;border-top:5px solid var(--red);border-radius:50%/100% 100% 0 0}
+#top{position:absolute;top:18px;left:50%;transform:translateX(-50%);text-align:center;text-shadow:0 1px 3px #000}
+#wave{font-size:15px;letter-spacing:.3em;color:var(--amber);font-weight:600}
+#left{font-size:13px;margin-top:4px;opacity:.85;letter-spacing:.12em}
+#banner{position:absolute;top:22%;left:0;right:0;text-align:center;opacity:0;transition:opacity .5s;text-shadow:0 2px 12px #000}
+#banner b{display:block;font-size:44px;letter-spacing:.35em;font-weight:800;margin-right:-.35em}
+#banner span{display:block;font-size:15px;letter-spacing:.5em;color:var(--amber);margin-top:8px}
+#radio{position:absolute;left:50%;bottom:132px;transform:translateX(-50%);max-width:min(680px,84vw);padding:10px 16px;opacity:0;transition:opacity .4s;
+  background:rgba(11,14,18,.72);border-left:3px solid var(--amber);font-size:15px;line-height:1.6}
+#radio .who{color:var(--amber);font-size:12px;letter-spacing:.25em;margin-right:10px}
+#map{position:absolute;right:20px;top:20px;width:170px;height:170px;border-radius:50%;border:1px solid var(--line)}
+#feed{position:absolute;right:22px;top:206px;text-align:right;font-size:13px;text-shadow:0 1px 2px #000}
+#feed div{animation:feed 2.6s forwards}#feed .hs{color:var(--red)}
+@keyframes feed{0%{opacity:0;transform:translateX(12px)}10%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
+#bl,#br{position:absolute;bottom:26px;text-shadow:0 1px 3px #000}
+#bl{left:28px;width:250px}#br{right:28px;text-align:right}
+.lbl{font-size:11px;letter-spacing:.3em;opacity:.7;margin-bottom:6px}
+#hpbar{height:8px;background:rgba(233,228,216,.18);position:relative}
+#hpbar i{position:absolute;left:0;top:0;bottom:0;width:100%;background:var(--pale);transition:width .15s}
+#hpbar.low i{background:var(--red)}
+#hpnum{font-size:30px;font-weight:700;margin-top:4px}
+#wname{font-size:12px;letter-spacing:.25em;opacity:.8}
+#ammo{font-size:18px;opacity:.9}#ammo b{font-size:46px;font-weight:700;color:var(--pale)}#ammo.low b{color:var(--red)}
+#gren{font-size:12px;letter-spacing:.15em;margin-top:2px;color:var(--amber)}
+#tip{position:absolute;left:50%;top:58%;transform:translateX(-50%);font-size:13px;letter-spacing:.3em;color:var(--amber);opacity:0;text-shadow:0 1px 3px #000}
+
+/* ---------- 畫面 ---------- */
+.screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:linear-gradient(90deg,rgba(11,14,18,.94) 0,rgba(11,14,18,.8) 46%,rgba(11,14,18,.25) 100%)}
+.panel{width:min(1040px,92vw);padding:0 12px}
+.kicker{font-size:12px;letter-spacing:.5em;color:var(--amber)}
+h1{font-size:clamp(56px,10vw,120px);font-weight:900;letter-spacing:.08em;line-height:1;margin:14px 0 6px}
+h1 em{font-style:normal;color:var(--amber)}
+h2{font-size:clamp(36px,6vw,64px);font-weight:900;letter-spacing:.2em;margin:10px 0 18px}
+.sub{font-size:14px;letter-spacing:.42em;opacity:.7}
+.story{max-width:520px;margin:28px 0 26px;font-size:15px;line-height:1.95;opacity:.92;border-left:2px solid var(--line);padding-left:18px}
+.keys{display:grid;grid-template-columns:repeat(4,auto);gap:8px 22px;max-width:560px;font-size:13px;margin-bottom:30px;justify-content:start}
+.keys kbd{display:inline-block;min-width:26px;padding:2px 7px;margin-right:8px;border:1px solid var(--line);font:inherit;font-size:12px;text-align:center;color:var(--amber)}
+button{pointer-events:auto;cursor:pointer;font:inherit;font-size:17px;font-weight:700;letter-spacing:.5em;padding:15px 34px 15px 42px;
+  color:var(--ink);background:var(--amber);border:0;clip-path:polygon(0 0,100% 0,100% 68%,calc(100% - 14px) 100%,0 100%);transition:filter .15s,transform .15s}
+button:hover{filter:brightness(1.12);transform:translateX(3px)}
+button:focus-visible{outline:2px solid var(--pale);outline-offset:3px}
+.note{margin-top:26px;font-size:11px;opacity:.5;letter-spacing:.08em;line-height:1.7;max-width:520px}
+.stats{display:grid;grid-template-columns:repeat(4,auto);gap:6px 36px;justify-content:start;margin:8px 0 30px}
+.stats div{font-size:11px;letter-spacing:.25em;opacity:.65}
+.stats b{display:block;font-size:30px;letter-spacing:0;opacity:1;margin-top:2px}
+#end.lose h2{color:var(--red)}#end.win h2{color:var(--amber)}
+#pause{background:rgba(11,14,18,.78)}#pause .panel{text-align:center}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation-duration:.01s!important}}
+</style>
+</head>
+<body>
+<div id="game"></div>
+
+<div id="hud" class="hidden">
+  <div id="vign"></div>
+  <div id="cross"><i></i><i></i><i></i><i></i></div>
+  <div id="hit"></div>
+  <div id="dmgdir"><b></b></div>
+  <div id="top"><div id="wave">備戰</div><div id="left" class="mono"></div></div>
+  <div id="banner"><b></b><span></span></div>
+  <div id="tip"></div>
+  <div id="radio"><span class="who">指揮所</span><span id="radiotext"></span></div>
+  <canvas id="map" width="340" height="340"></canvas>
+  <div id="feed"></div>
+  <div id="bl"><div class="lbl">體力</div><div id="hpbar"><i></i></div><div id="hpnum" class="mono">100</div></div>
+  <div id="br"><div id="wname"></div><div id="ammo" class="mono"><b>30</b> / 150</div><div id="gren"></div></div>
+</div>
+
+<div id="menu" class="screen">
+  <div class="panel">
+    <div class="kicker">臺中 · 西屯 · 新市政中心</div>
+    <h1>七期<em>防線</em></h1>
+    <div class="sub">THE LAST BLOCK — 虛構軍事射擊</div>
+    <p class="story">共軍對臺發動全面進攻的第三天。清晨,敵空降部隊突入臺中,企圖奪下新市政中心。<br>
+    你是後備步兵旅的步槍手,弟兄們已各自就位——夏綠地的沙包後面,只剩你一個人。<br>撐到援軍抵達。</p>
+    <div class="keys">
+      <span><kbd>W A S D</kbd>移動</span><span><kbd>滑鼠</kbd>瞄準</span><span><kbd>左鍵</kbd>射擊</span><span><kbd>右鍵</kbd>據槍瞄準</span>
+      <span><kbd>Shift</kbd>衝刺</span><span><kbd>C</kbd>蹲下</span><span><kbd>Space</kbd>跳</span><span><kbd>R</kbd>裝填</span>
+      <span><kbd>1 2</kbd>換槍</span><span><kbd>G</kbd>手榴彈</span><span><kbd>Esc</kbd>暫停</span>
+    </div>
+    <button id="btnStart">開始作戰</button>
+    <p class="note">本作為虛構軍事題材遊戲,人物與事件純屬虛構。地圖為示意配置,非實際測繪。</p>
+  </div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="panel"><div class="kicker">通訊中斷</div><h2>暫停</h2><button id="btnResume">回到戰場</button></div>
+</div>
+
+<div id="end" class="screen hidden">
+  <div class="panel">
+    <div class="kicker" id="endKicker"></div>
+    <h2 id="endTitle"></h2>
+    <p class="story" id="endText"></p>
+    <div class="stats">
+      <div>擊殺<b id="stKills" class="mono">0</b></div><div>爆頭<b id="stHead" class="mono">0</b></div>
+      <div>命中率<b id="stAcc" class="mono">0%</b></div><div>作戰時間<b id="stTime" class="mono">0:00</b></div>
+    </div>
+    <button id="btnRestart">再戰一次</button>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
