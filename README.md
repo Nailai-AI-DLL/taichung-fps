@@ -1,10 +1,8 @@
-# The Last Block (七期防線)
+# The Last Block
 
 A single-player first-person shooter that runs in the browser. Fictional setting: PLA airborne troops have landed in Taichung, Taiwan. You are a reserve infantryman holding a sandbag command post in the city's 7th Redevelopment Zone, and you have to survive six waves until reinforcements arrive.
 
 > This is a work of military fiction. All characters and events are fictional. The map is a stylized layout, not a survey of the real district.
-
-In-game text is in Traditional Chinese.
 
 ## Run
 
@@ -46,7 +44,7 @@ Embedded browsers that do not support Pointer Lock fall back to a reduced contro
 | `src/main.js` | three.js scene, player, weapons, enemy AI, HUD, audio |
 | `index.html` | Menus, HUD, styles |
 | `tests/core.test.mjs` | Unit tests, run with `npm test` |
-| `docs/decisions/` | Design decisions and tunable items (in Traditional Chinese) |
+| `docs/decisions/` | Design decisions and tunable items |
 
 ## Tests
 

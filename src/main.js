@@ -4,10 +4,10 @@ import { buildMap } from './map.js';
 import { PLAYER as PL, WEAPONS, GRENADE, ENEMY_TYPES, RULES, WAVES, STORY, expandWave } from './config.js';
 
 const $ = (id) => document.getElementById(id);
-const NOLOCK = new URLSearchParams(location.search).has('nolock'); // 自動化測試用:不因失去指標鎖定而暫停
+const NOLOCK = new URLSearchParams(location.search).has('nolock'); // for automated tests: do not pause when pointer lock is lost
 const rand = Math.random;
 
-// ============================================================ 渲染基礎
+// ============================================================ Rendering
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
@@ -22,7 +22,7 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
 });
 
-// 黃昏天空(地平線色與霧同色)
+// Dusk sky (horizon colour matches the fog)
 const sky = new THREE.Mesh(new THREE.SphereGeometry(1200, 24, 12), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false,
   vertexShader: 'varying vec3 v;void main(){v=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
@@ -36,7 +36,7 @@ scene.add(new THREE.HemisphereLight(0xa9b6d6, 0x4a3d34, 2.3));
 const sun = new THREE.DirectionalLight(0xffb27a, 2.4);
 sun.position.set(-80, 40, 35); scene.add(sun);
 
-// ============================================================ 貼圖工具
+// ============================================================ Texture helpers
 const cv = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
 function canvasTex(c, repeat) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
@@ -50,7 +50,7 @@ function radialTex() {
 }
 const glowTex = radialTex();
 
-// 外牆:一張貼圖 = 16m 寬 × 14m 高(4×4 扇窗);戰時燈火管制,只有零星亮燈
+// Facades: one tile = 16 m wide x 14 m tall (4x4 windows); wartime blackout, so few are lit
 const FACADE = {
   res: { base: '#8a8073', win: '#1d2630', pad: [12, 14, 40, 30], sill: '#a59a8a', lit: 0.07 },
   office: { base: '#3f4d5b', win: '#172330', pad: [4, 4, 56, 56], sill: null, lit: 0.05 },
@@ -61,7 +61,7 @@ const FACADE = {
 function facadeMat(style) {
   const f = FACADE[style], a = cv(256, 256), b = cv(256, 256), x = a.getContext('2d'), e = b.getContext('2d');
   x.fillStyle = f.base; x.fillRect(0, 0, 256, 256); e.fillStyle = '#000'; e.fillRect(0, 0, 256, 256);
-  if (style === 'opera') { // 歌劇院:白牆上的弧形玻璃開口
+  if (style === 'opera') { // Theater: curved glass openings in a white wall
     x.fillStyle = f.win;
     x.beginPath(); x.ellipse(128, 250, 92, 170, 0, Math.PI, 0); x.fill();
     x.beginPath(); x.ellipse(0, 0, 44, 70, 0, 0, Math.PI * 2); x.ellipse(256, 0, 44, 70, 0, 0, Math.PI * 2); x.fill();
@@ -78,18 +78,18 @@ function facadeMat(style) {
   }
   return new THREE.MeshLambertMaterial({ map: canvasTex(a, true), emissive: 0xffffff, emissiveMap: canvasTex(b, true) });
 }
-// 依牆面實際尺寸縮放 UV,讓所有同風格建物共用一個材質
+// Scale UVs by the real wall size so every building of a style shares one material
 function facadeBox(w, h, d) {
   const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv;
   for (let f = 0; f < 6; f++) for (let i = 0; i < 4; i++) {
     const k = f * 4 + i;
-    if (f === 2 || f === 3) uv.setXY(k, 0.004, 0.004); // 屋頂取底色
+    if (f === 2 || f === 3) uv.setXY(k, 0.004, 0.004); // roof samples the base colour
     else uv.setXY(k, uv.getX(k) * (f < 2 ? d : w) / 16, uv.getY(k) * h / 14);
   }
   return g;
 }
 
-// ============================================================ 建構世界
+// ============================================================ World
 const MAP = buildMap();
 const colliders = MAP.colliders;
 const grid = buildGrid(colliders);
@@ -106,20 +106,20 @@ function box(parent, mat, sx, sy, sz, x, y, z) {
   ground.rotation.x = -Math.PI / 2; scene.add(ground);
   for (const b of MAP.blocks) box(scene, lam(b.green ? 0x3f5c36 : 0x6d6964), b.x1 - b.x0, 0.06, b.z1 - b.z0, (b.x0 + b.x1) / 2, 0.03, (b.z0 + b.z1) / 2);
 
-  // 車道線
+  // Lane markings
   const dashGeo = new THREE.PlaneGeometry(3, 0.22); dashGeo.rotateX(-Math.PI / 2);
   const dashes = new THREE.InstancedMesh(dashGeo, new THREE.MeshBasicMaterial({ color: 0xcfc8a8 }), MAP.roads.length * 52);
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), Qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), V = new THREE.Vector3(), S1 = new THREE.Vector3(1, 1, 1);
   let n = 0;
   for (const r of MAP.roads) for (let t = -204; t < 204; t += 8) {
-    const off = r.name === '台灣大道' ? 8 : 0; // 大道中央是分隔島,線畫在單側
+    const off = r.name === 'Taiwan Blvd' ? 8 : 0; // the boulevard has a median, so the line sits to one side
     V.set(r.axis === 'x' ? t : r.c + off, 0.02, r.axis === 'x' ? r.c + off : t);
     M.compose(V, r.axis === 'x' ? Q : Qz, S1); dashes.setMatrixAt(n++, M);
   }
   dashes.count = n; scene.add(dashes);
-  box(scene, lam(0x4d5a42), 400, 0.12, 3, 0, 0.06, -125); // 分隔島
+  box(scene, lam(0x4d5a42), 400, 0.12, 3, 0, 0.06, -125); // median
 
-  // 建物
+  // Buildings
   const fm = {}; for (const s of Object.keys(FACADE)) fm[s] = facadeMat(s);
   for (const b of MAP.buildings) {
     const m = new THREE.Mesh(facadeBox(b.w, b.h, b.d), fm[b.style]); m.position.set(b.x, b.h / 2, b.z); scene.add(m);
@@ -128,7 +128,7 @@ function box(parent, mat, sx, sy, sz, x, y, z) {
     if (d.type === 'beam') { const m = new THREE.Mesh(facadeBox(d.w, d.h, d.d), fm.gov); m.position.set(d.x, d.y, d.z); scene.add(m); }
     if (d.type === 'pond') { const m = new THREE.Mesh(new THREE.CircleGeometry(d.r, 40), lam(0x2d4c5e)); m.rotation.x = -Math.PI / 2; m.scale.x = 1.5; m.position.set(d.x, 0.08, d.z); scene.add(m); }
   }
-  // 遠景天際線(只是剪影,無碰撞)
+  // Distant skyline (silhouettes only, no collision)
   const far = lam(0x3b414b);
   for (let i = 0; i < 90; i++) {
     const a = rand() * Math.PI * 2, r = 250 + rand() * 260, x = Math.cos(a) * r, z = Math.sin(a) * r;
@@ -137,17 +137,18 @@ function box(parent, mat, sx, sy, sz, x, y, z) {
     box(scene, far, w, h, w * (0.7 + rand() * 0.6), x, h / 2, z);
   }
 
-  // 地標招牌
+  // Landmark signs
   for (const l of MAP.labels) {
-    const px = 96, c = cv(px * l.text.length + 40, px + 36), x = c.getContext('2d');
-    x.font = `900 ${px}px "PingFang TC","Noto Sans TC","Microsoft JhengHei",sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle';
+    const px = 96, font = `900 ${px}px system-ui,"Helvetica Neue",Arial,sans-serif`, mc = cv(8, 8).getContext('2d'); mc.font = font;
+    const c = cv(Math.ceil(mc.measureText(l.text).width) + 70, px + 36), x = c.getContext('2d');
+    x.font = font; x.textAlign = 'center'; x.textBaseline = 'middle';
     x.fillStyle = 'rgba(11,14,18,.55)'; x.fillRect(0, 0, c.width, c.height);
     x.fillStyle = '#f1ead8'; x.fillText(l.text, c.width / 2, c.height / 2 + 4);
     const h = l.size * 1.35, m = new THREE.Mesh(new THREE.PlaneGeometry(h * c.width / c.height, h), new THREE.MeshBasicMaterial({ map: canvasTex(c), transparent: true }));
     m.position.set(l.x, l.y, l.z); m.rotation.y = l.ry; scene.add(m);
   }
 
-  // 掩體
+  // Cover
   const glass = lam(0x161b22), tire = lam(0x1a1a1a);
   for (const p of MAP.props) {
     if (p.type === 'car') {
@@ -165,7 +166,7 @@ function box(parent, mat, sx, sy, sz, x, y, z) {
     }
   }
 
-  // 樹(Instanced)
+  // Trees (instanced)
   const T = MAP.trees, trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.24, 2.6, 6), lam(0x4a3b2c), T.length);
   const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.9, 0), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), T.length);
   const col = new THREE.Color(), Sv = new THREE.Vector3(), Qr = new THREE.Quaternion();
@@ -177,7 +178,7 @@ function box(parent, mat, sx, sy, sz, x, y, z) {
   });
   scene.add(trunk, crown);
 
-  // 指揮所旗桿
+  // Command post flagpole
   const fc = cv(180, 120), fx = fc.getContext('2d');
   fx.fillStyle = '#d0202a'; fx.fillRect(0, 0, 180, 120); fx.fillStyle = '#10237a'; fx.fillRect(0, 0, 90, 60);
   fx.fillStyle = '#fff'; fx.translate(45, 30);
@@ -188,7 +189,7 @@ function box(parent, mat, sx, sy, sz, x, y, z) {
   flag.position.set(8.75, 6.1, 26); scene.add(flag);
 })();
 
-// 遠方濃煙
+// Distant smoke columns
 const smokes = [];
 for (const [x, z] of [[-240, -250], [270, -110], [130, 300], [-310, 150], [40, -330], [-150, 320]]) {
   const fire = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff7a2a, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, opacity: 0.8 }));
@@ -206,7 +207,7 @@ function updateSmoke(t) {
   }
 }
 
-// ============================================================ 音效(全部用 WebAudio 合成)
+// ============================================================ Audio (all synthesized with Web Audio)
 let AC = null, master = null, noiseBuf = null;
 function initAudio() {
   if (AC) { AC.resume(); return; }
@@ -247,7 +248,7 @@ const sfx = {
   drone(d) { tone(210, 190, 0.12, 0.1 / (1 + d / 10), 'sawtooth'); },
 };
 
-// ============================================================ 特效池
+// ============================================================ Effect pools
 const tracerMatP = new THREE.LineBasicMaterial({ color: 0xffe2a0 }), tracerMatE = new THREE.LineBasicMaterial({ color: 0xa8ffb0 });
 const tracers = Array.from({ length: 48 }, () => {
   const l = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)), tracerMatP);
@@ -278,15 +279,15 @@ function updateFx(dt) {
   }
 }
 
-// ============================================================ 狀態
+// ============================================================ State
 const S = { mode: 'menu', wave: -1, queue: [], spawnT: 0, interT: 0, time: 0, kills: 0, heads: 0, shots: 0, hits: 0, flowT: 0, alive: 0 };
 const P = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: 0, hp: PL.hp, eye: PL.eye, crouch: false, onGround: true, lastHurt: -99, wi: 0, grenades: PL.grenades, ads: false, bloom: 0, bob: 0, kick: 0 };
 let W = [];
 const enemies = [], hitMeshes = [], pickups = [], grenades = [];
 const keys = new Set();
-let firing = false, fireLatch = false, fireQueued = false, edgeTurn = 0; // edgeTurn:沒鎖定滑鼠時,游標靠左右邊緣持續轉向
+let firing = false, fireLatch = false, fireQueued = false, edgeTurn = 0; // edgeTurn: without pointer lock, holding the cursor near a side edge keeps turning
 
-// ============================================================ 槍枝模型(掛在攝影機上)
+// ============================================================ View model (attached to the camera)
 const gun = new THREE.Group(); camera.add(gun);
 const gunMat = lam(0x2e3238), gunMat2 = lam(0x474c40);
 const rifleModel = new THREE.Group(), pistolModel = new THREE.Group();
@@ -294,7 +295,7 @@ box(rifleModel, gunMat, 0.055, 0.075, 0.52, 0, 0, -0.1); box(rifleModel, gunMat,
 box(rifleModel, gunMat2, 0.05, 0.16, 0.07, 0, -0.1, -0.02); box(rifleModel, gunMat, 0.02, 0.05, 0.14, 0, 0.065, -0.06);
 box(rifleModel, gunMat2, 0.06, 0.06, 0.2, 0, -0.005, -0.3);
 box(pistolModel, gunMat, 0.04, 0.055, 0.22, 0, 0, -0.1); box(pistolModel, gunMat2, 0.038, 0.13, 0.055, 0, -0.08, -0.02);
-rifleModel.position.z = -0.22; pistolModel.position.z = -0.14; // 往前推,避免槍托貼臉佔滿畫面
+rifleModel.position.z = -0.22; pistolModel.position.z = -0.14; // pushed forward so the stock does not fill the screen
 gun.add(rifleModel, pistolModel);
 const muzzle = new THREE.Object3D(); gun.add(muzzle);
 const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc36a, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
@@ -315,12 +316,12 @@ function hitMarker(head) { hud.hit.className = head ? 'head' : ''; hitT = 0.16; 
 function updateHud(dt) {
   const w = W[P.wi], hp = Math.max(0, Math.ceil(P.hp));
   hud.hpfill.style.width = hp + '%'; hud.hpnum.textContent = hp; hud.hpbar.classList.toggle('low', hp <= 30);
-  hud.wname.textContent = w.reloadT > 0 ? w.def.name + ' — 裝填中' : w.def.name;
+  hud.wname.textContent = w.reloadT > 0 ? w.def.name + ' — RELOADING' : w.def.name;
   hud.ammo.innerHTML = `<b>${w.mag}</b> / ${w.reserve === Infinity ? '∞' : w.reserve}`;
   hud.ammo.classList.toggle('low', w.mag <= w.def.mag * 0.2);
-  hud.gren.textContent = '手榴彈 × ' + P.grenades;
-  hud.wave.textContent = S.wave < 0 ? '備戰' : `第 ${S.wave + 1} / ${WAVES.length} 波`;
-  hud.left.textContent = S.interT > 0 ? `下一波 ${Math.ceil(S.interT)} 秒` : `敵軍殘存 ${S.alive + S.queue.length}`;
+  hud.gren.textContent = 'GRENADES × ' + P.grenades;
+  hud.wave.textContent = S.wave < 0 ? 'STAND BY' : `WAVE ${S.wave + 1} / ${WAVES.length}`;
+  hud.left.textContent = S.interT > 0 ? `NEXT WAVE IN ${Math.ceil(S.interT)}s` : `HOSTILES ${S.alive + S.queue.length}`;
   hud.cross.style.setProperty('--gap', (P.ads ? 0 : 4 + P.bloom * 9 + Math.hypot(P.vel.x, P.vel.z) * 0.9) + 'px');
   hud.cross.style.opacity = W[P.wi].reloadT > 0 ? 0.35 : 1;
   if (bannerT > 0 && (bannerT -= dt) <= 0) hud.banner.style.opacity = 0;
@@ -349,7 +350,7 @@ function drawMap() {
   c.fillStyle = '#e9e4d8'; c.beginPath(); c.moveTo(h, h - 11); c.lineTo(h + 7, h + 8); c.lineTo(h, h + 4); c.lineTo(h - 7, h + 8); c.fill();
 }
 
-// ============================================================ 玩家
+// ============================================================ Player
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _dir = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3();
 function updatePlayer(dt) {
   let f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0), s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
@@ -387,7 +388,7 @@ function damagePlayer(dmg, sx, sz) {
   if (P.hp <= 0) endGame(false);
 }
 
-// ============================================================ 武器
+// ============================================================ Weapons
 function resetWeapons() { W = WEAPONS.map((def) => ({ def, mag: def.mag, reserve: def.reserve, cool: 0, reloadT: 0 })); P.wi = 0; }
 function switchWeapon(i) { if (i === P.wi || !W[i]) return; W[P.wi].reloadT = 0; P.wi = i; W[i].cool = 0.25; P.kick = 0.5; }
 function startReload() {
@@ -398,7 +399,7 @@ function startReload() {
 function fire() {
   const w = W[P.wi], def = w.def;
   if (w.cool > 0 || w.reloadT > 0) return false;
-  if (w.mag <= 0) { sfx.empty(); w.cool = 0.2; if (w.reserve > 0) startReload(); else tip('彈藥耗盡 — 按 2 換手槍'); return true; }
+  if (w.mag <= 0) { sfx.empty(); w.cool = 0.2; if (w.reserve > 0) startReload(); else tip('OUT OF AMMO — PRESS 2 FOR PISTOL'); return true; }
   w.mag--; w.cool = def.interval; S.shots++;
   camera.getWorldDirection(_dir);
   _right.setFromMatrixColumn(camera.matrixWorld, 0); _up.setFromMatrixColumn(camera.matrixWorld, 1);
@@ -408,7 +409,7 @@ function fire() {
   _dir.addScaledVector(_right, Math.cos(a) * r).addScaledVector(_up, Math.sin(a) * r).normalize();
   const o = camera.position;
   let dist = raycastWorld(o.x, o.y, o.z, _dir.x * def.range, _dir.y * def.range, _dir.z * def.range, colliders) * def.range;
-  if (_dir.y < -0.001) dist = Math.min(dist, -o.y / _dir.y); // 地面
+  if (_dir.y < -0.001) dist = Math.min(dist, -o.y / _dir.y); // ground
   ray.set(o, _dir); ray.far = dist;
   const hit = ray.intersectObjects(hitMeshes, false)[0];
   if (hit) {
@@ -428,10 +429,10 @@ function updateWeapons(dt) {
   const w = W[P.wi];
   w.cool -= dt; P.bloom = Math.max(0, P.bloom - dt * 2.4); P.kick = Math.max(0, P.kick - dt * 9);
   if (w.reloadT > 0 && (w.reloadT -= dt) <= 0) { const n = Math.min(w.def.mag - w.mag, w.reserve); w.mag += n; w.reserve -= n; w.reloadT = 0; }
-  // fireQueued:按下與放開落在同一幀(極短的點擊)時,仍保證打出一發
+  // fireQueued: guarantees one shot when press and release land in the same frame
   if (w.reloadT > 0) fireQueued = false;
   else if ((firing || fireQueued) && (w.def.auto || !fireLatch || fireQueued) && fire()) { fireLatch = true; fireQueued = false; }
-  // 槍枝姿態
+  // View model pose
   rifleModel.visible = P.wi === 0; pistolModel.visible = P.wi === 1;
   const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
   const tx = ads ? 0 : 0.2, ty = ads ? (P.wi === 0 ? -0.105 : -0.06) : -0.19, tz = ads ? -0.3 : -0.42, k = Math.min(1, 16 * dt);
@@ -445,10 +446,10 @@ function updateWeapons(dt) {
   if (muzzleFlash.visible) muzzleFlash.material.rotation = rand() * 6;
 }
 
-// 手榴彈
+// Grenades
 const grenGeo = new THREE.SphereGeometry(0.09, 8, 6);
 function throwGrenade() {
-  if (P.grenades <= 0) { tip('沒有手榴彈'); return; }
+  if (P.grenades <= 0) { tip('NO GRENADES'); return; }
   P.grenades--;
   camera.getWorldDirection(_dir);
   const m = new THREE.Mesh(grenGeo, lam(0x39422e)); const o = camera.position, clear = raycastWorld(o.x, o.y, o.z, _dir.x * 0.7, _dir.y * 0.7, _dir.z * 0.7, colliders) >= 1;
@@ -466,7 +467,7 @@ function updateGrenades(dt) {
     if ((g.t -= dt) <= 0) { explode(p, GRENADE.radius, GRENADE.dmg, true); scene.remove(g.m); grenades.splice(i, 1); }
   }
 }
-// 爆炸點(略抬高避免貼地誤判)到目標之間沒有障礙才算炸到
+// A blast only hurts targets with a clear line from the blast point (raised slightly off the ground)
 function blastClear(pos, x, y, z) { const oy = pos.y + 0.4; return raycastWorld(pos.x, oy, pos.z, x - pos.x, y - oy, z - pos.z, colliders) >= 1; }
 function explode(pos, radius, dmg, byPlayer) {
   const d0 = pos.distanceTo(camera.position);
@@ -482,7 +483,7 @@ function explode(pos, radius, dmg, byPlayer) {
   if (d0 < radius && blastClear(pos, camera.position.x, camera.position.y - 0.3, camera.position.z)) damagePlayer(dmg * (byPlayer ? GRENADE.selfMul : 1) * (1 - d0 / radius), pos.x, pos.z);
 }
 
-// ============================================================ 敵人
+// ============================================================ Enemies
 const _ft = { x: 0, z: 0 };
 const skinMat = lam(0xc49a78), darkMat = lam(0x1f2226), redMat = new THREE.MeshBasicMaterial({ color: 0xd8281e });
 function hitPart(e, parent, mat, sx, sy, sz, x, y, z, head) {
@@ -529,7 +530,7 @@ function killEnemy(e, head, silent) {
   if (e.drone) { if (!silent) explode(e.group.position, 0, 0, false); scene.remove(e.group); e.gone = true; }
   if (silent) return;
   S.kills++; if (head) S.heads++; sfx.kill();
-  feed((head ? '爆頭 ' : '擊殺 ') + e.def.name, head);
+  feed((head ? 'HEADSHOT — ' : 'KILLED — ') + e.def.name, head);
   if (!e.drone) {
     const r = rand();
     if (r < RULES.dropAmmo) addPickup('ammo', e.group.position.x, e.group.position.z);
@@ -546,7 +547,7 @@ function updateEnemy(e, dt) {
     const oy = p.y + (e.drone ? 0 : 1.5 * def.scale);
     e.los = raycastWorld(p.x, oy, p.z, px - p.x, chestY - oy, pz - p.z, colliders) >= 1;
   }
-  // 沿流場走向玩家
+  // Follow the flow field toward the player
   const followFlow = (speed) => {
     flowTarget(grid, flow, p.x, p.z, px, pz, _ft);
     const vx = _ft.x - p.x, vz = _ft.z - p.z, l = Math.hypot(vx, vz) || 1;
@@ -575,7 +576,7 @@ function updateEnemy(e, dt) {
   resolveCircle(p, 0.4, 0, 1.7, colliders);
   g.rotation.y = lerpAngle(g.rotation.y, face, Math.min(1, 10 * dt));
   const sw = moved ? Math.sin(e.phase) * 0.6 : 0; e.legL.rotation.x = sw; e.legR.rotation.x = -sw;
-  // 射擊:看見玩家 → 反應時間 → 點放 → 停頓
+  // Shooting: see the player -> reaction time -> burst -> pause
   if (engage) {
     e.aimT += dt;
     if (e.aimT > def.react) {
@@ -593,7 +594,7 @@ function enemyShoot(e, dx, dz, dist, chestY) {
   else { _v2.set(P.pos.x + (rand() - 0.5) * 3 + dx * 8, chestY + (rand() - 0.3) * 1.6, P.pos.z + (rand() - 0.5) * 3 + dz * 8); tracer(_v, _v2, true); }
 }
 
-// ============================================================ 補給
+// ============================================================ Pickups
 function addPickup(type, x, z) {
   const g = new THREE.Group();
   if (type === 'ammo') box(g, lam(0x55702f), 0.5, 0.3, 0.3, 0, 0, 0);
@@ -609,31 +610,31 @@ function updatePickups(dt) {
     const k = pickups[i], m = k.mesh; k.t += dt; m.rotation.y += dt * 1.5; if (k.type !== 'supply') m.position.y = 0.5 + Math.sin(k.t * 3) * 0.08;
     if (Math.hypot(m.position.x - P.pos.x, m.position.z - P.pos.z) > (k.type === 'supply' ? 2 : 1.4)) { if (k.type !== 'supply' && k.t > 45) { scene.remove(m); pickups.splice(i, 1); } continue; }
     const r = W[0];
-    if (k.type === 'ammo') { if (r.reserve >= r.def.maxReserve) continue; const n = Math.min(RULES.ammoPickup, r.def.maxReserve - r.reserve); r.reserve += n; tip('+' + n + ' 步槍彈'); }
-    else if (k.type === 'med') { if (P.hp >= PL.hp) continue; P.hp = Math.min(PL.hp, P.hp + RULES.medPickup); tip('+' + RULES.medPickup + ' 體力'); }
+    if (k.type === 'ammo') { if (r.reserve >= r.def.maxReserve) continue; const n = Math.min(RULES.ammoPickup, r.def.maxReserve - r.reserve); r.reserve += n; tip('+' + n + ' RIFLE AMMO'); }
+    else if (k.type === 'med') { if (P.hp >= PL.hp) continue; P.hp = Math.min(PL.hp, P.hp + RULES.medPickup); tip('+' + RULES.medPickup + ' HEALTH'); }
     else if (r.reserve >= r.def.maxReserve && P.hp >= PL.hp && P.grenades >= PL.maxGrenades) continue;
-    else { r.reserve = Math.min(r.def.maxReserve, r.reserve + RULES.supplyAmmo); P.hp = Math.min(PL.hp, P.hp + RULES.supplyHeal); P.grenades = Math.min(PL.maxGrenades, P.grenades + RULES.supplyGrenades); tip('補給完成'); }
+    else { r.reserve = Math.min(r.def.maxReserve, r.reserve + RULES.supplyAmmo); P.hp = Math.min(PL.hp, P.hp + RULES.supplyHeal); P.grenades = Math.min(PL.maxGrenades, P.grenades + RULES.supplyGrenades); tip('RESUPPLIED'); }
     sfx.pick(); scene.remove(m); pickups.splice(i, 1);
   }
 }
 
-// ============================================================ 波次
+// ============================================================ Waves
 function startWave(n) {
   S.wave = n; const w = WAVES[n];
   S.queue = expandWave(w); S.spawnT = 0.5;
-  banner(w.name, `第 ${n + 1} 波`); radio(w.radio);
+  banner(w.name, `WAVE ${n + 1}`); radio(w.radio);
 }
 function updateWaves(dt) {
   if (S.interT > 0) { if ((S.interT -= dt) <= 0) startWave(S.wave + 1); return; }
   if (S.queue.length) { if ((S.spawnT -= dt) <= 0 && S.alive < RULES.maxAlive) { spawnEnemy(S.queue.pop()); S.spawnT = RULES.spawnGap; } }
   else if (S.alive === 0) {
     if (S.wave >= WAVES.length - 1) { endGame(true); return; }
-    S.interT = RULES.intermission; banner('擊退', `第 ${S.wave + 1} 波`, 2.5); radio(STORY.supply, 6);
+    S.interT = RULES.intermission; banner('REPELLED', `WAVE ${S.wave + 1}`, 2.5); radio(STORY.supply, 6);
     if (!pickups.some((p) => p.type === 'supply')) addPickup('supply', MAP.supply.x, MAP.supply.z);
   }
 }
 
-// ============================================================ 流程
+// ============================================================ Flow
 function setMode(m) {
   S.mode = m;
   $('menu').classList.toggle('hidden', m !== 'menu'); $('pause').classList.toggle('hidden', m !== 'paused');
@@ -641,7 +642,7 @@ function setMode(m) {
   gun.visible = m !== 'menu';
 }
 let lockFailed = false;
-function lock() { if (NOLOCK) return; try { const r = renderer.domElement.requestPointerLock(); if (r && r.catch) r.catch(() => { lockFailed = true; }); } catch { lockFailed = true; /* 無法鎖定時仍可遊玩 */ } }
+function lock() { if (NOLOCK) return; try { const r = renderer.domElement.requestPointerLock(); if (r && r.catch) r.catch(() => { lockFailed = true; }); } catch { lockFailed = true; /* still playable without pointer lock */ } }
 function startGame() {
   initAudio();
   for (const e of enemies) scene.remove(e.group); enemies.length = 0; hitMeshes.length = 0;
@@ -653,15 +654,15 @@ function startGame() {
   resetWeapons(); firing = false; keys.clear();
   camera.fov = 75; camera.updateProjectionMatrix();
   setMode('playing'); lock();
-  banner('七期防線', '守住新市政中心', 4); radio(STORY.intro, 6.5);
+  banner('THE LAST BLOCK', 'HOLD THE CIVIC CENTER', 4); radio(STORY.intro, 6.5);
 }
 function endGame(win) {
   setMode(win ? 'won' : 'dead'); firing = false;
   if (document.pointerLockElement) document.exitPointerLock();
   $('end').className = 'screen ' + (win ? 'win' : 'lose');
-  $('endKicker').textContent = win ? '任務完成' : `倒在第 ${S.wave + 1} 波`;
-  $('endTitle').textContent = win ? '七期守住了' : '防線失守';
-  $('endText').textContent = win ? STORY.win : '你倒下了,但抵抗不會停止。重新整備,再把防線奪回來。';
+  $('endKicker').textContent = win ? 'MISSION COMPLETE' : `FELL ON WAVE ${S.wave + 1}`;
+  $('endTitle').textContent = win ? 'THE BLOCK HOLDS' : 'LINE BROKEN';
+  $('endText').textContent = win ? STORY.win : 'You went down, but the resistance does not stop. Regroup and take the line back.';
   $('stKills').textContent = S.kills; $('stHead').textContent = S.heads;
   $('stAcc').textContent = (S.shots ? Math.round(S.hits / S.shots * 100) : 0) + '%';
   $('stTime').textContent = Math.floor(S.time / 60) + ':' + String(Math.floor(S.time % 60)).padStart(2, '0');
@@ -675,7 +676,7 @@ function update(dt) {
   updateGrenades(dt);
   let alive = 0;
   for (let i = enemies.length - 1; i >= 0; i--) { const e = enemies[i]; updateEnemy(e, dt); if (e.gone) enemies.splice(i, 1); else if (e.alive) alive++; }
-  // 敵人彼此不重疊
+  // Keep enemies from overlapping
   for (let i = 0; i < enemies.length; i++) { const a = enemies[i]; if (!a.alive || a.drone) continue;
     for (let j = i + 1; j < enemies.length; j++) { const b = enemies[j]; if (!b.alive || b.drone) continue;
       const dx = b.group.position.x - a.group.position.x, dz = b.group.position.z - a.group.position.z, d = Math.hypot(dx, dz);
@@ -697,7 +698,7 @@ function frame(now) {
   renderer.render(scene, camera);
 }
 
-// ============================================================ 輸入
+// ============================================================ Input
 addEventListener('keydown', (e) => {
   if (S.mode !== 'playing') return;
   if (['Space', 'Tab', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
@@ -712,21 +713,21 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('blur', () => { keys.clear(); firing = false; });
 addEventListener('mousemove', (e) => {
-  if (S.mode !== 'playing') return; // 沒鎖定時也能轉視角(保底)
+  if (S.mode !== 'playing') return; // look still works without pointer lock (fallback)
   const ex = e.clientX / innerWidth; edgeTurn = document.pointerLockElement ? 0 : ex < 0.12 ? -(1 - ex / 0.12) : ex > 0.88 ? (ex - 0.88) / 0.12 : 0;
   const s = 0.0022 * (P.ads ? 0.55 : 1);
   P.yaw -= e.movementX * s; P.pitch = Math.max(-1.5, Math.min(1.5, P.pitch - e.movementY * s));
 });
 addEventListener('mousedown', (e) => {
   if (S.mode !== 'playing') return;
-  if (!NOLOCK && !lockFailed && document.pointerLockElement !== renderer.domElement) lock(); // 順手重試鎖定,但不吃掉這次點擊
+  if (!NOLOCK && !lockFailed && document.pointerLockElement !== renderer.domElement) lock(); // retry the lock, but never swallow the click
   if (e.button === 0) { firing = true; fireLatch = false; fireQueued = true; } else if (e.button === 2) P.ads = true;
 });
 addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; else if (e.button === 2) P.ads = false; });
 addEventListener('contextmenu', (e) => e.preventDefault());
 let wheelT = 0;
 addEventListener('wheel', () => { const t = performance.now(); if (S.mode === 'playing' && t - wheelT > 300) { wheelT = t; switchWeapon(1 - P.wi); } }, { passive: true });
-document.addEventListener('pointerlockerror', () => { if (!lockFailed) { lockFailed = true; tip('此環境無法鎖定滑鼠 — 建議改用 Chrome 開啟'); } });
+document.addEventListener('pointerlockerror', () => { if (!lockFailed) { lockFailed = true; tip('MOUSE LOCK UNAVAILABLE — TRY CHROME'); } });
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement) lockFailed = false;
   const locked = document.pointerLockElement === renderer.domElement;
@@ -741,7 +742,7 @@ $('btnResume').addEventListener('click', () => { if (NOLOCK || lockFailed) { set
 setMode('menu');
 requestAnimationFrame(frame);
 
-// 測試/除錯掛勾:step 可在分頁於背景(rAF 被節流)時手動推進模擬
+// Test/debug hook: step() advances the simulation manually when the tab is in the background (rAF throttled)
 window.__game = { S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys,
   setFiring: (v) => { firing = v; fireLatch = false; },
   step(n = 1, dt = 1 / 60) { for (let i = 0; i < n && S.mode === 'playing'; i++) { update(dt); updateFx(dt); } sky.position.copy(camera.position); renderer.render(scene, camera); } };

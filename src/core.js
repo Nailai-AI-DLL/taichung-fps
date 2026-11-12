@@ -1,7 +1,7 @@
-// 純邏輯(不依賴 three.js / DOM),可用 node --test 驗證。
+// Pure logic (no three.js or DOM), testable with node --test.
 
-export const HALF = 200;      // 地圖半邊長(公尺)
-export const CELL = 2;        // 尋路格大小(4m 會把沙包陣地整個封死,見決策紀錄)
+export const HALF = 200;      // half the map side length (metres)
+export const CELL = 2;        // pathfinding cell size (4 m seals off the sandbag post; see the decision record)
 export const GRID_N = (HALF * 2) / CELL;
 const N = GRID_N;
 
@@ -14,7 +14,7 @@ export function mulberry32(a) {
   };
 }
 
-// 線段 o + d*t (t∈[0,1]) 對 AABB;回傳進入點 t,未命中回傳 -1
+// Segment o + d*t (t in [0,1]) against an AABB; returns the entry t, or -1 on a miss
 export function segAABB(ox, oy, oz, dx, dy, dz, b) {
   let t0 = 0, t1 = 1, ta, tb, inv;
   if (Math.abs(dx) < 1e-9) { if (ox < b.minX || ox > b.maxX) return -1; }
@@ -26,7 +26,7 @@ export function segAABB(ox, oy, oz, dx, dy, dz, b) {
   return t0;
 }
 
-// 回傳線段最先撞到場景的 t;沒撞到回傳 1
+// Returns the first t at which the segment hits the world, or 1 if it hits nothing
 export function raycastWorld(ox, oy, oz, dx, dy, dz, colliders) {
   let best = 1;
   for (let i = 0; i < colliders.length; i++) {
@@ -36,7 +36,7 @@ export function raycastWorld(ox, oy, oz, dx, dy, dz, colliders) {
   return best;
 }
 
-// 圓柱(XZ 平面的圓)推出 AABB;p 需有 x、z。可踩上的矮物(頂面 ≤ 腳底+0.35)不擋。
+// Pushes a cylinder (a circle in the XZ plane) out of AABBs; p needs x and z. Low objects you can step onto (top <= feet + 0.35) do not block.
 export function resolveCircle(p, r, feetY, bodyH, colliders) {
   for (let pass = 0; pass < 2; pass++) {
     for (let i = 0; i < colliders.length; i++) {
@@ -50,7 +50,7 @@ export function resolveCircle(p, r, feetY, bodyH, colliders) {
         const d = Math.sqrt(d2), k = (r - d) / d;
         p.x += dx * k; p.z += dz * k;
       } else {
-        // 圓心在盒內:沿穿透最淺的軸推出
+        // centre is inside the box: push out along the shallowest axis
         const l = p.x - c.minX, rr = c.maxX - p.x, n = p.z - c.minZ, f = c.maxZ - p.z;
         const m = Math.min(l, rr, n, f);
         if (m === l) p.x = c.minX - r; else if (m === rr) p.x = c.maxX + r;
@@ -61,7 +61,7 @@ export function resolveCircle(p, r, feetY, bodyH, colliders) {
   return p;
 }
 
-// 腳下可站立的高度(地面 0 或矮物頂面)
+// Standing height under the feet (ground 0 or the top of a low object)
 export function groundAt(x, z, feetY, colliders, r = 0.25) {
   let g = 0;
   for (let i = 0; i < colliders.length; i++) {
@@ -75,13 +75,13 @@ export function groundAt(x, z, feetY, colliders, r = 0.25) {
 export const cellIx = (v) => Math.max(0, Math.min(N - 1, Math.floor((v + HALF) / CELL)));
 export const cellCenter = (i) => -HALF + (i + 0.5) * CELL;
 
-// 所有擋路的障礙(含車、護欄、沙包)都進尋路格
+// Every blocking obstacle (cars, barriers, sandbags included) goes into the grid
 export function buildGrid(colliders) {
   const g = new Uint8Array(N * N);
   for (let i = 0; i < N; i++) { g[i] = g[i + (N - 1) * N] = g[i * N] = g[N - 1 + i * N] = 1; }
   for (const c of colliders) {
     if (c.maxY < 0.5) continue;
-    // 只要障礙(外擴單位半徑)碰到格子方塊就整格封閉:保證沿格心走的路徑不會擦到任何東西
+    // A cell is blocked if an obstacle (inflated by the unit radius) touches its square, so a path through cell centres never clips anything
     const m = 0.45 + CELL / 2;
     const x0 = cellIx(c.minX - m - CELL / 2), x1 = cellIx(c.maxX + m + CELL / 2);
     const z0 = cellIx(c.minZ - m - CELL / 2), z1 = cellIx(c.maxZ + m + CELL / 2);
@@ -108,7 +108,7 @@ export function nearestFree(grid, ix, iz) {
   return -1;
 }
 
-// 從目標格做 BFS,out[i] = 到目標的步數(不可達為 -1)
+// BFS from the target cell; out[i] = steps to the target (-1 if unreachable)
 export function flowField(grid, ix, iz, out) {
   out.fill(-1);
   let s = ix + iz * N;
@@ -122,17 +122,17 @@ export function flowField(grid, ix, iz, out) {
       if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
       const n = nx + nz * N;
       if (grid[n] || out[n] >= 0) continue;
-      if (k >= 4 && (grid[nx + cz * N] || grid[cx + nz * N])) continue; // 不切牆角
+      if (k >= 4 && (grid[nx + cz * N] || grid[cx + nz * N])) continue; // no corner cutting
       out[n] = d; _q[t++] = n;
     }
   }
   return out;
 }
 
-// 回傳應前往的鄰格索引;-1 表示沒有更好的格子
+// Returns the neighbour cell to move to, or -1 if none is better
 export function nextCell(grid, flow, ix, iz) {
   const cur = ix + iz * N;
-  const stuck = grid[cur] || flow[cur] < 0; // 被擠進牆邊格:挑任一可達鄰格脫困
+  const stuck = grid[cur] || flow[cur] < 0; // pushed into a blocked cell: take any reachable neighbour to get out
   let best = -1, bd = stuck ? Infinity : flow[cur];
   for (let k = 0; k < 8; k++) {
     const nx = ix + DX[k], nz = iz + DZ[k];
@@ -145,7 +145,7 @@ export function nextCell(grid, flow, ix, iz) {
   return best;
 }
 
-// 位於 (x,z) 的單位下一步該朝哪個點走;沒有更近的格子時直接走向目標 (px,pz)
+// The point a unit at (x,z) should walk toward next; heads straight for (px,pz) when no cell is closer
 export function flowTarget(grid, flow, x, z, px, pz, out) {
   const n = nextCell(grid, flow, cellIx(x), cellIx(z));
   if (n >= 0 && flow[n] > 0) { out.x = cellCenter(n % N); out.z = cellCenter((n / N) | 0); }

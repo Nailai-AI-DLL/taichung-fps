@@ -1,17 +1,17 @@
-// 七期新市政中心「示意」地圖資料(純資料,不依賴 three.js)。
-// 注意:路名與地標取自實地,但相對位置、尺寸、建物數量皆為遊戲化配置,非實際測繪。
+// Stylized map data for Taichung's 7th Redevelopment Zone (pure data, no three.js).
+// Note: road names and landmarks are real, but positions, sizes, and building counts are arranged for gameplay, not surveyed.
 import { mulberry32, HALF } from './core.js';
 
-// axis:'x' 表示東西向道路(位於 z=c);'z' 表示南北向道路(位於 x=c)。北方為 -z。
+// axis 'x' is an east-west road (at z=c); 'z' is a north-south road (at x=c). North is -z.
 export const ROADS = [
-  { name: '台灣大道', axis: 'x', c: -125, w: 30 },
-  { name: '市政北二路', axis: 'x', c: -20, w: 14 },
-  { name: '市政路', axis: 'x', c: 50, w: 16 },
-  { name: '市政南一路', axis: 'x', c: 160, w: 12 },
-  { name: '惠來路', axis: 'z', c: -160, w: 14 },
-  { name: '河南路', axis: 'z', c: -70, w: 14 },
-  { name: '惠中路', axis: 'z', c: 70, w: 14 },
-  { name: '文心路', axis: 'z', c: 160, w: 20 },
+  { name: 'Taiwan Blvd', axis: 'x', c: -125, w: 30 },
+  { name: 'Shizheng N 2nd Rd', axis: 'x', c: -20, w: 14 },
+  { name: 'Shizheng Rd', axis: 'x', c: 50, w: 16 },
+  { name: 'Shizheng S 1st Rd', axis: 'x', c: 160, w: 12 },
+  { name: 'Huilai Rd', axis: 'z', c: -160, w: 14 },
+  { name: 'Henan Rd', axis: 'z', c: -70, w: 14 },
+  { name: 'Huizhong Rd', axis: 'z', c: 70, w: 14 },
+  { name: 'Wenxin Rd', axis: 'z', c: 160, w: 20 },
 ];
 
 const XI = [[-200, -167], [-153, -77], [-63, 63], [77, 150], [170, 200]];
@@ -59,24 +59,24 @@ export function buildMap(seed = 7) {
     if (kind === 'cityhall') {
       B(-34, -74, 34, 30, 62, 'gov'); B(34, -74, 34, 30, 62, 'gov');
       decos.push({ type: 'beam', x: 0, y: 55, z: -74, w: 34, h: 12, d: 30 });
-      labels.push({ text: '臺中市政府', x: 0, y: 55, z: -58.8, ry: 0, size: 4.2 });
+      labels.push({ text: 'TAICHUNG CITY HALL', x: 0, y: 55, z: -58.8, ry: 0, size: 3 });
       for (let i = 0; i < 6; i++) trees.push({ x: -50 + i * 20, z: -36, s: 1, red: false });
     } else if (kind === 'opera') {
       B(0, 114, 84, 46, 30, 'opera');
-      labels.push({ text: '臺中國家歌劇院', x: 0, y: 23, z: 90.8, ry: Math.PI, size: 3.6 });
+      labels.push({ text: 'NATIONAL TAICHUNG THEATER', x: 0, y: 23, z: 90.8, ry: Math.PI, size: 3 });
       for (let i = 0; i < 10; i++) trees.push({ x: R(-58, 58), z: R(62, 86), s: R(0.8, 1.2), red: false });
     } else if (kind === 'mall') {
       B(-115, -88, 64, 36, 48, 'mall'); B(-115, -46, 64, 30, 40, 'mall');
-      labels.push({ text: '百貨公司', x: -82.8, y: 36, z: -88, ry: Math.PI / 2, size: 5 });
+      labels.push({ text: 'DEPARTMENT STORE', x: -82.8, y: 36, z: -88, ry: Math.PI / 2, size: 2.4 });
     } else if (kind === 'park') {
       for (let i = 0; i < 46; i++) {
         const x = R(x0 + 3, x1 - 3), z = R(z0 + 3, z1 - 3);
-        if (Math.abs(x) < 11 && z > 9 && z < 31) continue; // 指揮所淨空
+        if (Math.abs(x) < 11 && z > 9 && z < 31) continue; // keep the command post clear
         trees.push({ x, z, s: R(0.8, 1.4), red: false });
       }
     } else if (kind === 'maple') {
       decos.push({ type: 'pond', x: 0, z: -172, r: 22 });
-      labels.push({ text: '秋紅谷', x: 0, y: 4, z: -146, ry: 0, size: 2.2 });
+      labels.push({ text: 'MAPLE GARDEN', x: 0, y: 4, z: -146, ry: 0, size: 2.2 });
       for (let i = 0; i < 34; i++) {
         const a = R(0, Math.PI * 2), r = R(25, 36);
         const x = Math.cos(a) * r * 1.5, z = -172 + Math.sin(a) * r;
@@ -87,13 +87,13 @@ export function buildMap(seed = 7) {
       fill(x0, x1, z0, z1, TALL.has(key));
     }
   }
-  // 台灣大道中央分隔島行道樹
+  // Trees along the Taiwan Blvd median
   for (let x = -190; x <= 190; x += 14) trees.push({ x, z: -125, s: 1.1, red: false });
 
   const spawnList = Object.values(SPAWNS).flat();
   const nearSpawn = (x, z, r) => spawnList.some(([sx, sz]) => Math.hypot(sx - x, sz - z) < r);
 
-  // 路上的棄置車輛(掩體)
+  // Abandoned vehicles on the roads (cover)
   for (const road of ROADS) {
     for (let t = -188; t < 188; t += R(12, 24)) {
       if (rng() > 0.55) continue;
@@ -107,7 +107,7 @@ export function buildMap(seed = 7) {
     }
   }
 
-  // 手工配置的防禦工事
+  // Hand-placed defensive works
   for (let x = -24; x <= 24; x += 3) { if (Math.abs(x) === 6 || Math.abs(x) === 18) continue; P('barrier', x, -15, 2.4, 0.6, 0.95, 0x9c9c96); }
   for (let x = -21; x <= 21; x += 3) { if (Math.abs(x) === 9) continue; P('barrier', x, 45, 2.4, 0.6, 0.95, 0x9c9c96); }
   const SB = 0x8d7c57;
