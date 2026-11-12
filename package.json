@@ -1,1 +1,1 @@
-{"type":"module","private":true,"scripts":{"test":"node --test tests/core.test.mjs"}}
+{"type":"module","private":true,"scripts":{"stamp":"node scripts/stamp.mjs","test":"node scripts/stamp.mjs --check && node --test tests/core.test.mjs"}}

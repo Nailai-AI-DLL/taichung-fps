@@ -107,3 +107,12 @@ test('shop: every item points at a real weapon, and priced weapons are sold exac
   for (const w of WEAPONS.filter((x) => x.price)) assert.ok(w.supply > 0 && SHOP.some((it) => it.type === 'ammo' && it.weapon === w.id), `${w.id} needs a way to get ammo`);
   for (const e of Object.values(ENEMY_TYPES)) assert.ok(e.score > 0, 'every enemy pays a reward');
 });
+
+// Regression guard: players once got a stale mix of files after a deploy because nothing versioned the modules.
+test('cache busting: index.html carries the current content hash of every module', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { stamped, MODULES } = await import('../scripts/stamp.mjs');
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.equal(html, stamped(html), 'index.html is out of date. Run: npm run stamp');
+  for (const f of MODULES) assert.match(html, new RegExp(`"\\./${f.replace(/[.]/g, '\\.')}\\?v=[0-9a-f]{8}"`), `${f} is not versioned`);
+});

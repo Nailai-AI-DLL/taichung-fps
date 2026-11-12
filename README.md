@@ -47,6 +47,7 @@ On Windows and Linux, Ctrl+W closes the browser tab and a page cannot block it, 
 | `src/core.js` | Pure logic: ray casting, collision, flow-field pathfinding |
 | `src/main.js` | three.js scene, player, weapons, enemy AI, HUD, audio |
 | `index.html` | Menus, HUD, styles |
+| `scripts/stamp.mjs` | Writes content-hash versions for every module into `index.html` (cache busting) |
 | `tests/core.test.mjs` | Unit tests, run with `npm test` |
 | `docs/decisions/` | Design decisions and tunable items |
 
@@ -56,11 +57,21 @@ On Windows and Linux, Ctrl+W closes the browser tab and a page cannot block it, 
 npm test
 ```
 
-The eight tests have no dependencies; they were run on Node.js 22. They cover ray casting, cover occlusion, collision, spawn-point validity, reachability, wave data, shop data, and a walking simulation that sends a soldier from every spawn point to 60 player positions with collision enabled.
+The nine tests have no dependencies; they were run on Node.js 22. They cover ray casting, cover occlusion, collision, spawn-point validity, reachability, wave data, shop data, the version stamp in `index.html`, and a walking simulation that sends a soldier from every spawn point to 60 player positions with collision enabled.
+
+## Releasing a change
+
+After editing anything in `src/` or `vendor/`, run:
+
+```bash
+npm run stamp
+```
+
+This rewrites the import map in `index.html` so each module URL carries a hash of its content, and updates the build id shown on the menu. Players then get the new files on a normal reload, with no hard refresh and no mix of old and new modules. `npm test` fails if you forget. GitHub Pages still caches `index.html` itself for about 10 minutes, so an open tab may take that long to see a release.
 
 ## Tuning checklist
 
-1. Change values only in `src/config.js`, then reload the page.
+1. Change values only in `src/config.js`, then reload the page. Run `npm run stamp` before committing.
 2. After editing the map (`map.js`), always run `npm test`. It checks that no start or spawn point sits inside an obstacle and that every spawn point can reach the player.
 3. To fast-forward while testing, open `http://localhost:5273/?nolock=1` and use the console:
    - `__game.startGame(); __game.step(600)` advances the simulation by 10 seconds.
