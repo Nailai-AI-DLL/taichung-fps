@@ -2,6 +2,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { raycastWorld, resolveCircle, groundAt, buildGrid, flowField, flowTarget, cellIx, GRID_N, lerpAngle } from './core.js';
 import { buildMap } from './map.js';
 import { GLTFLoader } from '../vendor/loaders/GLTFLoader.js';
+import { clone as skeletonClone } from '../vendor/utils/SkeletonUtils.js';
 import { PLAYER as PL, WEAPONS, SHOP, GRENADE, ENEMY_TYPES, RULES, WAVES, STORY, expandWave } from './config.js';
 
 const $ = (id) => document.getElementById(id);
@@ -322,6 +323,7 @@ const VIEW = {
 };
 const HIP_DEFAULT = [0.2, -0.19, -0.42];
 const assetUrl = (p) => './' + p + (window.ASSET_V && window.ASSET_V[p] ? '?v=' + window.ASSET_V[p] : '');
+const protoGuns = {};
 const gunSteel = new THREE.MeshStandardMaterial({ color: 0x4b5058, roughness: 0.5, metalness: 0 });
 async function loadViewModels() {
   const loader = new GLTFLoader(), box3 = new THREE.Box3(), c = new THREE.Vector3();
@@ -334,6 +336,7 @@ async function loadViewModels() {
         if (o.material && o.material.map) { o.material.metalness = 0; o.material.metalnessMap = null; o.material.roughness = Math.max(0.55, o.material.roughness); } // no environment map, so metal would render black
         else o.material = gunSteel; // untextured grey models get a dark steel finish
       });
+      protoGuns[id] = model.clone(); // untouched copy for third-person use (enemy hands)
       const inner = new THREE.Group(); inner.add(model); inner.rotation.y = v.muzzle * Math.PI / 2; inner.scale.setScalar(v.len);
       inner.updateMatrixWorld(true); box3.setFromObject(inner); box3.getCenter(c);
       const h = box3.max.y - box3.min.y;
@@ -558,6 +561,81 @@ function explode(pos, radius, dmg, byPlayer) {
 
 // ============================================================ Enemies
 const _ft = { x: 0, z: 0 };
+// ---- Rigged soldier (assets/models/soldier.glb): Mixamo skeleton, four clips. The box figure remains as the fallback
+// and its invisible parts are still the hit boxes.
+//   clips   index of each clip in the file     height  standing height in metres at scale 1
+//   tint    multiplies the texture per enemy type
+//   gun     how the rifle sits in the right hand bone: position (bone units) and one rotation per clip (radians, XYZ),
+//           because the wrist is turned differently when running and when aiming. The values were solved in the
+//           browser so the barrel points forward (aim) or forward and down (run).
+const SOLDIER = {
+  file: 'soldier', height: 1.78, clips: { die: 0, run: 1, walk: 2, aim: 3 },
+  tint: { rifle: 0xffffff, assault: 0xb4ccff, heavy: 0xd8cfa6 },
+  gun: { len: 0.95, grip: [0.19, -0.1, 0], pos: [0, 0.06, 0], rot: { run: [0.244, -0.728, 0.931], aim: [0.633, -0.743, 1.425] } },
+};
+let soldierProto = null;
+const soldierMats = {};
+async function loadSoldier() {
+  try {
+    const gltf = await new GLTFLoader().loadAsync(assetUrl(`assets/models/${SOLDIER.file}.glb`));
+    let mesh = null; gltf.scene.traverse((o) => { if (o.isSkinnedMesh && !mesh) mesh = o; });
+    mesh.geometry.computeBoundingBox();
+    const scale = SOLDIER.height / (mesh.geometry.boundingBox.max.y - mesh.geometry.boundingBox.min.y);
+    const clips = {}, speed = {};
+    for (const [name, i] of Object.entries(SOLDIER.clips)) {
+      const clip = gltf.animations[i]; if (!clip) throw new Error('missing clip ' + name);
+      clip.tracks = clip.tracks.filter((t) => !/\.scale$/.test(t.name));
+      for (const t of clip.tracks) if (/Hips\.position$/.test(t.name)) {
+        // The clips walk the character forward; enemy positions are driven by code, so keep only the vertical motion.
+        const v = t.values, n = v.length;
+        speed[name] = Math.hypot(v[n - 3] - v[0], v[n - 1] - v[2]) / clip.duration * scale;
+        for (let k = 0; k < n; k += 3) { v[k] = v[0]; v[k + 2] = v[2]; }
+      }
+      clips[name] = clip;
+    }
+    soldierProto = { scene: gltf.scene, clips, speed, scale, material: mesh.material };
+  } catch (err) { console.warn('soldier model not loaded, keeping the box figures:', err && err.message); }
+}
+loadSoldier();
+function soldierMat(type) {
+  if (!soldierMats[type]) {
+    const m = soldierMats[type] = soldierProto.material.clone();
+    m.metalness = 0; m.metalnessMap = null; m.roughness = 0.85;
+    m.color.setHex(SOLDIER.tint[type] ?? 0xffffff);
+    m.emissive.setHex(0x505050); m.emissiveMap = m.map; // a little self-light so uniforms stay readable at dusk
+  }
+  return soldierMats[type];
+}
+function placeHandGun(e) {
+  const h = e.handGun, c = SOLDIER.gun; if (!h) return;
+  h.position.set(...c.pos); h.rotation.set(...(c.rot[e.cur] || c.rot.run));
+  h.children[0].position.set(...c.grip);
+  e.group.updateMatrixWorld(true); h.scale.setScalar(1); h.parent.getWorldScale(_hs);
+  h.scale.setScalar(c.len * e.def.scale / _hs.x);
+}
+const _hs = new THREE.Vector3(), _gq = new THREE.Quaternion(), _ge = new THREE.Euler();
+function dressSoldier(e) {
+  const g = e.group;
+  g.traverse((o) => { if (o.isMesh) o.visible = false; }); // hide the box figure; its parts keep working as hit boxes
+  const body = skeletonClone(soldierProto.scene); body.scale.setScalar(soldierProto.scale);
+  const mat = soldierMat(e.type);
+  body.traverse((o) => { if (o.isMesh) { o.material = mat; o.frustumCulled = false; } });
+  g.add(body); e.body = body;
+  const hand = body.getObjectByName('mixamorigRightHand');
+  if (hand && protoGuns.m16) { const holder = new THREE.Group(); holder.add(protoGuns.m16.clone()); hand.add(holder); e.handGun = holder; placeHandGun(e); }
+  e.mixer = new THREE.AnimationMixer(body); e.acts = {};
+  for (const k in soldierProto.clips) e.acts[k] = e.mixer.clipAction(soldierProto.clips[k]);
+  e.acts.die.setLoop(THREE.LoopOnce); e.acts.die.clampWhenFinished = true;
+  e.cur = null; setAnim(e, 'run');
+}
+function setAnim(e, name, fade = 0.25) {
+  if (e.cur === name) return;
+  const next = e.acts[name]; next.reset().play();
+  if (e.cur) e.acts[e.cur].crossFadeTo(next, fade, false);
+  e.cur = name;
+  if (e.handGun && SOLDIER.gun.rot[name]) e.gunQ = _gq.clone().setFromEuler(_ge.set(...SOLDIER.gun.rot[name])); // the grip turns with the clip
+}
+
 const skinMat = lam(0xc49a78), darkMat = lam(0x1f2226), redMat = new THREE.MeshBasicMaterial({ color: 0xd8281e });
 function hitPart(e, parent, mat, sx, sy, sz, x, y, z, head) {
   const m = box(parent, mat, sx, sy, sz, x, y, z); m.userData.enemy = e; m.userData.head = !!head; e.hit.push(m); return m;
@@ -585,6 +663,7 @@ function spawnEnemy({ type, dir }) {
     box(g, darkMat, 0.07, 0.1, type === 'heavy' ? 1.0 : 0.75, 0.2, 1.2, 0.42);
     if (type === 'heavy') box(g, darkMat, 0.62, 0.5, 0.2, 0, 1.15, -0.22);
     g.scale.setScalar(def.scale);
+    if (soldierProto) dressSoldier(e);
     g.position.set(pt[0] + (rand() - 0.5) * 6, 0, pt[1] + (rand() - 0.5) * 6);
     resolveCircle(g.position, 0.4, 0, 1.7, colliders);
   }
@@ -599,6 +678,7 @@ function damageEnemy(e, dmg, head) {
 }
 function killEnemy(e, head, silent) {
   e.alive = false; e.deadT = 0;
+  if (e.mixer) { e.acts.die.timeScale = 1.4; setAnim(e, 'die', 0.12); }
   for (const m of e.hit) { const i = hitMeshes.indexOf(m); if (i >= 0) hitMeshes.splice(i, 1); }
   if (e.drone) { if (!silent) explode(e.group.position, 0, 0, false); scene.remove(e.group); e.gone = true; }
   if (silent) return;
@@ -613,7 +693,7 @@ function killEnemy(e, head, silent) {
 }
 function updateEnemy(e, dt) {
   const g = e.group, def = e.def, p = g.position;
-  if (!e.alive) { e.deadT += dt; g.rotation.x = -Math.min(1, e.deadT / 0.4) * 1.5; if (e.deadT > 7) { scene.remove(g); e.gone = true; } return; }
+  if (!e.alive) { e.deadT += dt; if (e.mixer) e.mixer.update(dt); else g.rotation.x = -Math.min(1, e.deadT / 0.4) * 1.5; if (e.deadT > 7) { scene.remove(g); e.gone = true; } return; }
   const px = P.pos.x, pz = P.pos.z, chestY = P.pos.y + P.eye - 0.25;
   let dx = px - p.x, dz = pz - p.z; const dist = Math.hypot(dx, dz) || 1e-3; dx /= dist; dz /= dist;
   if ((e.losT -= dt) <= 0) {
@@ -638,18 +718,26 @@ function updateEnemy(e, dt) {
     return;
   }
   const engage = e.los && dist < def.range;
-  let face = g.rotation.y, moved = false;
+  let face = g.rotation.y, moved = false, animSpeed = 0;
   if (engage) {
     if ((e.strafeT -= dt) <= 0) { e.strafe = Math.floor(rand() * 3) - 1; e.strafeT = 0.8 + rand() * 1.6; }
     let mx = -dz * e.strafe * 0.6, mz = dx * e.strafe * 0.6;
     if (dist > def.pref) { flowTarget(grid, flow, p.x, p.z, px, pz, _ft); const vx = _ft.x - p.x, vz = _ft.z - p.z, l = Math.hypot(vx, vz) || 1; mx += vx / l; mz += vz / l; } else if (dist < def.pref * 0.5) { mx -= dx * 0.6; mz -= dz * 0.6; }
     const ml = Math.hypot(mx, mz);
-    if (ml > 0.01) { const sp = def.speed * 0.55; p.x += mx / ml * sp * dt; p.z += mz / ml * sp * dt; e.phase += sp * dt * 2.4; moved = true; }
+    if (ml > 0.01) { const sp = def.speed * 0.55; p.x += mx / ml * sp * dt; p.z += mz / ml * sp * dt; e.phase += sp * dt * 2.4; moved = true; animSpeed = sp; }
     face = Math.atan2(dx, dz);
-  } else { const sp = def.speed * (def.run || 1); face = followFlow(sp); e.phase += sp * dt * 2.4; moved = true; }
+  } else { const sp = def.speed * (def.run || 1); face = followFlow(sp); e.phase += sp * dt * 2.4; moved = true; animSpeed = sp; }
   resolveCircle(p, 0.4, 0, 1.7, colliders);
   g.rotation.y = lerpAngle(g.rotation.y, face, Math.min(1, 10 * dt));
   const sw = moved ? Math.sin(e.phase) * 0.6 : 0; e.legL.rotation.x = sw; e.legR.rotation.x = -sw;
+  if (e.mixer) {
+    // Running toward the player uses the run clip; in a firefight the aim clip plays, slowed to a near standstill when not strafing.
+    const name = engage ? 'aim' : 'run'; setAnim(e, name);
+    const base = (soldierProto.speed[name] || 1) * def.scale;
+    e.acts[name].timeScale = engage ? (moved ? Math.min(1.8, Math.max(0.6, animSpeed / base)) : 0.12) : Math.min(2.2, Math.max(0.7, animSpeed / base));
+    e.mixer.update(dt);
+    if (e.gunQ) e.handGun.quaternion.slerp(e.gunQ, Math.min(1, 10 * dt));
+  }
   // Shooting: see the player -> reaction time -> burst -> pause
   if (engage) {
     e.aimT += dt;
@@ -870,6 +958,6 @@ setMode('menu');
 requestAnimationFrame(frame);
 
 // Test/debug hook: step() advances the simulation manually when the tab is in the background (rAF throttled)
-window.__game = { VIEW, loadViewModels, gun, S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys, openShop, closeShop, buy, toMenu, switchWeapon, setMode,
+window.__game = { SOLDIER, placeHandGun, soldierReady: () => !!soldierProto, VIEW, loadViewModels, gun, S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys, openShop, closeShop, buy, toMenu, switchWeapon, setMode,
   setFiring: (v) => { firing = v; fireLatch = false; },
   step(n = 1, dt = 1 / 60) { for (let i = 0; i < n && S.mode === 'playing'; i++) { update(dt); updateFx(dt); } sky.position.copy(camera.position); renderer.render(scene, camera); } };

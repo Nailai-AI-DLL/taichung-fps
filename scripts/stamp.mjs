@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = new URL('../', import.meta.url);
-export const MODULES = ['src/main.js', 'src/core.js', 'src/map.js', 'src/config.js', 'vendor/three.module.min.js', 'vendor/loaders/GLTFLoader.js', 'vendor/utils/BufferGeometryUtils.js'];
+export const MODULES = ['src/main.js', 'src/core.js', 'src/map.js', 'src/config.js', 'vendor/three.module.min.js', 'vendor/loaders/GLTFLoader.js', 'vendor/utils/BufferGeometryUtils.js', 'vendor/utils/SkeletonUtils.js'];
 const ASSET_DIRS = ['assets/models'];
 const sha = (data) => createHash('sha256').update(data).digest('hex').slice(0, 8);
 

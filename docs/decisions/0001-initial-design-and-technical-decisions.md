@@ -27,6 +27,10 @@ A single-player first-person shooter for the browser. Fictional setting: enemy a
 | 15 | First-person weapons are GLB models (M16, Beretta 92, M24, Desert Eagle), loaded with three.js's GLTFLoader. Each file is normalized in code from a small table (real length, barrel direction, barrel height); the box models remain as placeholders and as the fallback. Weapons were renamed to match the models | The models arrive 1 unit long with inconsistent barrel directions, so fixing them in code avoids re-exporting; a missing or broken file never stops the game | Editing each model in Blender to a common origin and scale: cleaner files, but a manual step for every new model |
 | 16 | Untextured models get a flat dark steel material and metalness is forced to 0 on textured ones | The scene has no environment map, so metallic PBR materials would render black | Adding an environment map: more realistic, but changes the look of the whole scene |
 | 17 | First-person arms are built from boxes (sleeve, cuff, glove), one rig per weapon, attached to the gun group. Each arm is defined by a hand point and an elbow point | Needs no assets or skeleton, follows recoil, reload, and aiming for free, and is easy to retune per weapon | A rigged arms model with animations: better looking, but needs a model and an animation set per weapon |
+| 18 | Enemy soldiers use one rigged GLB (Mixamo skeleton, four clips made in Tripo). Each enemy is a skeleton clone with its own animation mixer; the run clip plays while approaching and the aim clip while fighting, cross-faded; death plays once and holds | One model keeps the download small (1 MB) and the three soldier types are told apart by tint and scale | A separate model per type: more variety, three times the assets and tuning |
+| 19 | Horizontal root motion is removed from the clips at load, and playback speed follows the enemy's actual speed | The clips walk the character forward, but positions are driven by the game's pathfinding, so both would fight; matching speed limits foot sliding | Driving movement from root motion: would need the pathfinding rewritten around the animation |
+| 20 | The box figure is still built for every soldier and hidden; its parts remain the hit boxes | Hit detection, headshots, and the fallback when the model fails to load all keep working unchanged | Ray casting against the skinned mesh or bone-attached boxes: more exact, more cost and code |
+| 21 | The enemy's rifle is the M16 GLB parented to the right-hand bone, with one grip rotation for the run clip and one for the aim clip, blended when the clip changes | The wrist is turned about 90 degrees differently between the two clips, so a single rotation leaves the barrel sideways in one of them | Inverse kinematics for both hands: correct in every pose, far more work |
 
 ## Tunable items (all provisional, all in `src/config.js`)
 1. **Difficulty**: standing still under fire from eight riflemen kills the player in about 10 seconds (measured).
@@ -42,7 +46,7 @@ A single-player first-person shooter for the browser. Fictional setting: enemy a
 ## Known limitations
 - Desktop keyboard and mouse only; no touch controls. Chrome or Safari is recommended.
 - The map boundary is an invisible wall.
-- Enemies only stand; they do not take cover or throw grenades. They are still box figures holding box guns.
+- Enemies only stand; they do not take cover or throw grenades. The hit boxes stand upright while the animated body leans when running, so a head shot on a sprinting soldier can register as a body shot.
 - The first-person arms are static boxes: fingers are not modelled and the hands do not move during a reload.
 - Lit-window patterns repeat, because buildings of one style share a texture.
 
@@ -63,4 +67,5 @@ A single-player first-person shooter for the browser. Fictional setting: enemy a
 - Browser run of the new features: kill rewards, opening the armory, a refused purchase when short of money, buying the sniper, the second sidearm, ammo, a grenade, and a medkit (including refusals when full), a scoped shot, a sidearm shot, and pause, resume, and return to the main menu with real key presses and clicks.
 - Browser run (`?nolock=1` with `window.__game.step()`): menu, combat, death screen, restart, grenades and drones, and a full six-wave clear, with no console errors.
 - Firing and looking were verified with real mouse events.
+- Rigged soldier: all four clips were inspected in the viewer; in game, running, aiming, a headshot kill with the death clip, body damage on a heavy, tint and scale per type, and a full six-wave run (120 kills, every soldier on the GLB model, no console errors) were checked.
 - GLB weapons: each of the four was checked in the viewer and in game (hip and aimed), fired once, and the sniper scope still hides the model; the loader and every model are requested with version hashes.

@@ -5,7 +5,7 @@
 <body><div id="l"></div>
 <script type="module">
 // Dev tool: shows every model in assets/models side by side, with axes (red +X, green +Y, blue +Z).
-// Open http://localhost:5273/tools/viewer.html?m=M16,M24&yaw=30
+// Open http://localhost:5273/tools/viewer.html?m=M16,M24&yaw=30  (add &d=_wip to look in assets/_wip)
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/loaders/GLTFLoader.js';
 const q = new URLSearchParams(location.search);
@@ -16,11 +16,25 @@ const scene = new THREE.Scene(); scene.add(new THREE.HemisphereLight(0xffffff, 0
 const cols = Math.ceil(Math.sqrt(names.length)), rows = Math.ceil(names.length / cols), info = [];
 const loader = new GLTFLoader();
 await Promise.all(names.map(async (n, i) => {
-  const g = (await loader.loadAsync(`../assets/models/${n}.glb`)).scene, box = new THREE.Box3().setFromObject(g), s = box.getSize(new THREE.Vector3());
+  const gltf = await loader.loadAsync(`../assets/${q.get('d') || 'models'}/${n}.glb`), g = gltf.scene, box = new THREE.Box3();
+  // Lists work per model: &m=a,a,a&anim=1&t=0,0.5,1 shows three moments of one clip.
+  // &anim=1&t=0.5 poses the model at 0.5 s of its second animation; &lock=1 removes horizontal root motion
+  if (q.has('anim') && gltf.animations.length) {
+    const pick = (k) => { const v = (q.get(k) || '').split(','); return +(v[i] ?? v[v.length - 1]) || 0; }, T = pick('t');
+    const clip = gltf.animations[pick('anim')] || gltf.animations[0];
+    if (q.has('lock')) for (const tr of clip.tracks) if (/Hips\.position$/.test(tr.name)) for (let k = 0; k < tr.values.length; k += 3) { tr.values[k] = tr.values[0]; tr.values[k + 2] = tr.values[2]; }
+    const mixer = new THREE.AnimationMixer(g); mixer.clipAction(clip).play(); mixer.setTime(T);
+    info.push(`${n}: ${gltf.animations.length} animations, showing #${gltf.animations.indexOf(clip)} at ${T}s of ${clip.duration.toFixed(2)}s`);
+  }
+  // Skinned meshes report unreliable bounds, so measure rigged models by their bones instead
+  g.updateMatrixWorld(true); let bones = 0; const bp = new THREE.Vector3();
+  g.traverse((o) => { if (o.isBone) { box.expandByPoint(o.getWorldPosition(bp)); bones++; } });
+  if (bones) box.expandByScalar(0.08 * box.getSize(bp).y); else box.setFromObject(g);
+  const s = box.getSize(new THREE.Vector3());
   const holder = new THREE.Group(); holder.add(g); g.position.sub(box.getCenter(new THREE.Vector3()));
   holder.add(new THREE.AxesHelper(Math.max(s.x, s.y, s.z) * 0.7));
   holder.scale.setScalar(1 / Math.max(s.x, s.y, s.z)); holder.position.set((i % cols) * 1.4, -Math.floor(i / cols) * 1.3, 0); holder.rotation.set(pitch, yaw, 0); scene.add(holder);
-  info.push(`${n}: size ${s.x.toFixed(2)} x ${s.y.toFixed(2)} x ${s.z.toFixed(2)}`);
+  info.push(`${n}: size ${s.x.toFixed(2)} x ${s.y.toFixed(2)} x ${s.z.toFixed(2)}${bones ? `, ${bones} bones` : ''}`);
 }));
 const w = cols * 1.4, h = rows * 1.3, a = innerWidth / innerHeight, half = Math.max(h / 2, w / 2 / a) * 1.05;
 const cam = new THREE.OrthographicCamera(-half * a, half * a, half, -half, -10, 10); cam.position.set((cols - 1) * 0.7, -(rows - 1) * 0.65, 5); 
