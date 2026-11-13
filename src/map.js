@@ -121,6 +121,37 @@ export function buildMap(seed = 7) {
   P('crate', -4.2, 27, 1.2, 1.2, 1.2, CR); P('crate', 4.4, 28, 1.2, 1.2, 1.2, CR); P('crate', 5.6, 28.2, 1.2, 1.2, 0.8, CR);
   P('crate', -30, 30, 1.2, 1.2, 1.2, CR); P('crate', 28, -6, 1.2, 1.2, 1.2, CR);
 
+  // Extra cover in varied heights: low pieces to crouch behind, chest-high pieces, and tall pieces that hide a standing
+  // player. The 1.1 m and 2.2 m crates form steps (the player can jump 1.1 m), so stacks double as vantage points.
+  const COVER = [ // type, w, d, h, color
+    ['block', 2.0, 0.8, 0.7, 0x8f908a], ['block', 2.2, 0.9, 1.2, 0x8f908a], ['block', 1.6, 1.6, 1.8, 0x85867f],
+    ['hesco', 1.5, 1.5, 1.4, 0x9a8a63], ['hesco', 3.0, 1.5, 1.4, 0x9a8a63],
+    ['crate', 1.1, 1.1, 1.1, CR], ['crate', 1.1, 1.1, 2.2, 0x4f5e36],
+    ['container', 6.0, 2.4, 2.6, 0x7a3b2e], ['container', 2.4, 6.0, 2.6, 0x2f5a6b],
+  ];
+  const clearOf = (x, z, w, d, pad) =>
+    !props.some((p) => Math.abs(p.x - x) < (p.w + w) / 2 + pad && Math.abs(p.z - z) < (p.d + d) / 2 + pad) &&
+    !buildings.some((b) => Math.abs(b.x - x) < (b.w + w) / 2 + pad && Math.abs(b.z - z) < (b.d + d) / 2 + pad);
+  function scatter(x0, x1, z0, z1, n, kinds) {
+    for (let tries = 0; n > 0 && tries < 400; tries++) {
+      const [type, w, d, h, color] = COVER[kinds[Math.floor(rng() * kinds.length)]], x = R(x0, x1), z = R(z0, z1);
+      // 3.2 m between pieces keeps every gap walkable for the pathfinding grid
+      if (Math.hypot(x - PLAYER_START.x, z - PLAYER_START.z) < 9 || nearSpawn(x, z, 10) || !clearOf(x, z, w, d, 3.2)) continue;
+      P(type, x, z, w, d, h, color); n--;
+    }
+  }
+  scatter(-58, 58, -9, 38, 16, [0, 1, 2, 3, 4, 5, 6]);      // the park around the command post
+  scatter(-45, 45, -56, -30, 9, [0, 1, 2, 3, 4, 5]);         // City Hall plaza
+  scatter(-12, 12, -86, -62, 3, [1, 3, 5]);                  // the gap between the City Hall towers
+  scatter(-55, 55, 62, 86, 9, [0, 1, 2, 3, 4, 6]);           // theater plaza
+  scatter(-150, 150, -136, -114, 8, [7, 8, 2, 4]);           // Taiwan Blvd
+  scatter(-150, 150, -25, -22, 5, [7]);                      // Shizheng N 2nd Rd
+  scatter(-150, 150, 46, 54, 5, [7, 4]);                     // Shizheng Rd
+  scatter(-74, -66, -100, 150, 5, [8, 1]);                   // Henan Rd
+  scatter(66, 74, -100, 150, 5, [8, 1]);                     // Huizhong Rd
+  // Stepped stacks beside the command post: 1.1 m, then 2.2 m
+  for (const [sx, sz] of [[-15, 27], [16, 7]]) { P('crate', sx, sz, 1.1, 1.1, 1.1, CR); P('crate', sx - 1.1, sz, 1.1, 1.1, 2.2, 0x4f5e36); P('crate', sx - 1.1, sz + 1.1, 1.1, 1.1, 2.2, 0x4f5e36); }
+
   const colliders = [];
   for (const b of buildings) colliders.push({ minX: b.x - b.w / 2, maxX: b.x + b.w / 2, minY: 0, maxY: b.h, minZ: b.z - b.d / 2, maxZ: b.z + b.d / 2, kind: 'bldg' });
   for (const p of props) colliders.push({ minX: p.x - p.w / 2, maxX: p.x + p.w / 2, minY: 0, maxY: p.h, minZ: p.z - p.d / 2, maxZ: p.z + p.d / 2, kind: p.type });

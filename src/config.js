@@ -47,6 +47,8 @@ export const RULES = {
   ammoPickup: 30, medPickup: 25,
   supplyAmmo: 180, supplyHeal: 60, supplyGrenades: 2,
   headBonus: 50,
+  // One dial for how well every enemy shoots: 1 is the original accuracy, lower is easier. It multiplies ENEMY_TYPES[].acc.
+  enemyAccuracy: 0.6,
 };
 
 // dirs: N = Taiwan Blvd, E = Wenxin Rd, W = Huilai Rd, S = Shizheng S 1st Rd

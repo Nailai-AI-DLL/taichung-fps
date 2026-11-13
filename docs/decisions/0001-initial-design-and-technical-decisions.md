@@ -31,9 +31,13 @@ A single-player first-person shooter for the browser. Fictional setting: enemy a
 | 19 | Horizontal root motion is removed from the clips at load, and playback speed follows the enemy's actual speed | The clips walk the character forward, but positions are driven by the game's pathfinding, so both would fight; matching speed limits foot sliding | Driving movement from root motion: would need the pathfinding rewritten around the animation |
 | 20 | The box figure is still built for every soldier and hidden; its parts remain the hit boxes | Hit detection, headshots, and the fallback when the model fails to load all keep working unchanged | Ray casting against the skinned mesh or bone-attached boxes: more exact, more cost and code |
 | 21 | The enemy's rifle is the M16 GLB parented to the right-hand bone, with one grip rotation for the run clip and one for the aim clip, blended when the clip changes | The wrist is turned about 90 degrees differently between the two clips, so a single rotation leaves the barrel sideways in one of them | Inverse kinematics for both hands: correct in every pose, far more work |
+| 22 | The first-person arms are cut from the soldier model: triangles skinned to the arm, forearm, hand, and finger bones are kept, and the upper-arm and forearm bones are re-parented under the gun group and aimed in code from a palm point and an elbow point per weapon. Fingers are curled by a fixed angle. The box arms remain as the fallback | Reuses an asset already downloaded, matches the enemies' uniform, and needs no extra model or animation | A separate rigged arms model with animations: better, but another asset and clip set. Reusing the aim clip's arm pose: the hands sit side by side there, wrong for a rifle |
+| 23 | Untextured weapon models are coloured by region with vertex colours (painter functions of position along the barrel and height) | The files have one material and no UVs, so regions cannot be assigned any other way without editing the models | Texturing in a modelling tool: better detail, a manual step per model |
+| 24 | Sixty-nine more cover pieces in five heights (0.7 m to 2.6 m) are scattered by the map seed with at least 3.2 m between pieces; 1.1 m and 2.2 m crates form climbable steps | Low pieces protect a crouching player, tall ones a standing player, and stacks give vantage points; the spacing keeps every gap walkable for the pathfinding grid | Terrain height changes: would need sloped collision and a different pathfinding grid |
+| 25 | `RULES.enemyAccuracy` multiplies every enemy's hit chance; it is set to 0.6 | One dial is easier to tune than four per-type values, which stay as the relative difference between types | Lowering each type's accuracy separately |
 
 ## Tunable items (all provisional, all in `src/config.js`)
-1. **Difficulty**: standing still under fire from eight riflemen kills the player in about 10 seconds (measured).
+1. **Difficulty**: `RULES.enemyAccuracy` (0.6). Standing still in the open against wave 1's eight riflemen, the player now lasts about 17 seconds from the first hit (measured); it was about 10 seconds at 1.0.
 2. **Pacing**: first contact in wave 1 takes about 25 seconds; 14 seconds between waves; 120 enemies across six waves.
 3. **Ammo economy**: rifle reserve 180 with a cap of 300; enemies drop ammo 30% of the time; each resupply adds 180. The pistol has unlimited reserve ammo as a fallback.
 4. **Feel**: recoil, spread, movement speed, and the aim-down-sights multiplier.
@@ -47,7 +51,7 @@ A single-player first-person shooter for the browser. Fictional setting: enemy a
 - Desktop keyboard and mouse only; no touch controls. Chrome or Safari is recommended.
 - The map boundary is an invisible wall.
 - Enemies only stand; they do not take cover or throw grenades. The hit boxes stand upright while the animated body leans when running, so a head shot on a sprinting soldier can register as a body shot.
-- The first-person arms are static boxes: fingers are not modelled and the hands do not move during a reload.
+- The first-person arms hold one fixed pose per weapon: the fingers do not move and the hands do not work the magazine during a reload.
 - Lit-window patterns repeat, because buildings of one style share a texture.
 
 ## Fixed issues
@@ -67,5 +71,6 @@ A single-player first-person shooter for the browser. Fictional setting: enemy a
 - Browser run of the new features: kill rewards, opening the armory, a refused purchase when short of money, buying the sniper, the second sidearm, ammo, a grenade, and a medkit (including refusals when full), a scoped shot, a sidearm shot, and pause, resume, and return to the main menu with real key presses and clicks.
 - Browser run (`?nolock=1` with `window.__game.step()`): menu, combat, death screen, restart, grenades and drones, and a full six-wave clear, with no console errors.
 - Firing and looking were verified with real mouse events.
+- Arms, paint, cover, accuracy: each weapon was checked at the hip and aimed with the model arms; the three painted weapons were inspected from the side; with the new cover the map tests pass and a full six-wave run completed with no stuck enemies; the survival time above was measured in the browser.
 - Rigged soldier: all four clips were inspected in the viewer; in game, running, aiming, a headshot kill with the death clip, body damage on a heavy, tint and scale per type, and a full six-wave run (120 kills, every soldier on the GLB model, no console errors) were checked.
 - GLB weapons: each of the four was checked in the viewer and in game (hip and aimed), fired once, and the sniper scope still hides the model; the loader and every model are requested with version hashes.

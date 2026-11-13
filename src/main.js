@@ -325,6 +325,20 @@ const HIP_DEFAULT = [0.2, -0.19, -0.42];
 const assetUrl = (p) => './' + p + (window.ASSET_V && window.ASSET_V[p] ? '?v=' + window.ASSET_V[p] : '');
 const protoGuns = {};
 const gunSteel = new THREE.MeshStandardMaterial({ color: 0x4b5058, roughness: 0.5, metalness: 0 });
+// Untextured models are coloured by region with vertex colours. Each painter gets u (-0.5 at the rear to +0.5 at the muzzle)
+// and y (height above the lowest point, in model units) and returns a colour.
+const PAINT = {
+  m9:     (u, y) => (u < -0.1 && y < 0.36 ? 0x4a3322 : u > 0.4 ? 0x5c6066 : 0x2e3136),                  // walnut grips, black frame and slide
+  deagle: (u, y) => (u < -0.1 && y < 0.33 ? 0x1b1b1d : 0x9da0a4),                                      // black grip, brushed steel body
+  m24:    (u, y) => (y > 0.148 ? 0x1c1d20 : u > 0.36 ? 0x202124 : (y < 0.105 || u < -0.18) ? 0x55603c : 0x2c2e32), // black scope and suppressor, olive stock
+};
+const paintMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0 });
+function paintGeometry(geo, fn, muzzle) {
+  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
+  geo.computeBoundingBox(); const y0 = geo.boundingBox.min.y;
+  for (let i = 0; i < pos.count; i++) { c.setHex(fn(pos.getX(i) * muzzle, pos.getY(i) - y0)); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+}
 async function loadViewModels() {
   const loader = new GLTFLoader(), box3 = new THREE.Box3(), c = new THREE.Vector3();
   await Promise.all(Object.entries(VIEW).map(async ([id, v]) => {
@@ -334,7 +348,8 @@ async function loadViewModels() {
         if (!o.isMesh) return;
         o.frustumCulled = false;
         if (o.material && o.material.map) { o.material.metalness = 0; o.material.metalnessMap = null; o.material.roughness = Math.max(0.55, o.material.roughness); } // no environment map, so metal would render black
-        else o.material = gunSteel; // untextured grey models get a dark steel finish
+        else if (PAINT[id]) { paintGeometry(o.geometry, PAINT[id], v.muzzle); o.material = paintMat; }
+        else o.material = gunSteel; // untextured models without a painter get a plain steel finish
       });
       protoGuns[id] = model.clone(); // untouched copy for third-person use (enemy hands)
       const inner = new THREE.Group(); inner.add(model); inner.rotation.y = v.muzzle * Math.PI / 2; inner.scale.setScalar(v.len);
@@ -350,12 +365,13 @@ async function loadViewModels() {
 loadViewModels();
 
 // First-person arms: box sleeves and gloves, one rig per weapon, attached to the gun so they follow recoil, reload, and aiming.
-// Each entry is [hand, elbow] in gun-group space: the glove sits at the hand and the sleeve runs toward the elbow (off screen).
+// Each entry gives a palm point and an elbow point in gun-group space. The box arms (fallback) put a glove at the palm and run a sleeve toward the elbow.
 const ARMS = {
-  m16:    { r: [[0.012, -0.085, 0.085], [0.13, -0.3, 0.5]],  l: [[-0.005, -0.075, -0.235], [-0.42, -0.3, 0.4]] },
-  m24:    { r: [[0.012, -0.075, 0.07],  [0.13, -0.3, 0.5]],  l: [[-0.005, -0.06, -0.2],    [-0.42, -0.3, 0.4]] },
-  m9:     { r: [[0.004, -0.08, 0.0],    [0.16, -0.3, 0.4]],   l: [[-0.045, -0.115, -0.005], [-0.4, -0.33, 0.34]] },
-  deagle: { r: [[0.004, -0.085, 0.0],   [0.16, -0.3, 0.4]],   l: [[-0.045, -0.12, -0.005],  [-0.4, -0.33, 0.34]] },
+  // [palm point, elbow point, forearm roll (model arms only)] per hand, in gun-group space
+  m16:    { r: [[0.012, -0.085, 0.085], [0.13, -0.3, 0.5], -1.57],   l: [[-0.005, -0.075, -0.235], [-0.42, -0.3, 0.4], 0] },
+  m24:    { r: [[0.012, -0.075, 0.07],  [0.13, -0.3, 0.5], -1.57],   l: [[-0.005, -0.06, -0.2],    [-0.42, -0.3, 0.4], 0] },
+  m9:     { r: [[0.004, -0.075, 0.01],  [0.09, -0.16, 0.4], -1.57],  l: [[-0.03, -0.085, 0.0],     [-0.26, -0.2, 0.36], 1.57] },
+  deagle: { r: [[0.004, -0.08, 0.01],   [0.09, -0.16, 0.4], -1.57],  l: [[-0.03, -0.09, 0.0],      [-0.26, -0.2, 0.36], 1.57] },
 };
 // A little emissive keeps the arms readable when the camera faces away from the sun
 const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x5c6f47, emissive: 0x1c2415 }), gloveMat = new THREE.MeshLambertMaterial({ color: 0x3b3f37, emissive: 0x121310 }), armRigs = {};
@@ -368,7 +384,7 @@ function buildArm(parent, hand, elbow) {
   box(g, gloveMat, 0.09, 0.09, 0.025, 0, 0, 0.092); // cuff
   parent.add(g);
 }
-for (const id in ARMS) { const rig = armRigs[id] = new THREE.Group(); buildArm(rig, ...ARMS[id].r); buildArm(rig, ...ARMS[id].l); rig.visible = false; gun.add(rig); }
+for (const id in ARMS) { const rig = armRigs[id] = new THREE.Group(); buildArm(rig, ARMS[id].r[0], ARMS[id].r[1]); buildArm(rig, ARMS[id].l[0], ARMS[id].l[1]); rig.visible = false; gun.add(rig); }
 const muzzle = new THREE.Object3D(); gun.add(muzzle);
 const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc36a, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
 muzzleFlash.scale.setScalar(0.32); muzzleFlash.visible = false; muzzle.add(muzzleFlash);
@@ -507,7 +523,8 @@ function updateWeapons(dt) {
   else if ((firing || fireQueued) && (w.def.auto || !fireLatch || fireQueued) && fire()) { fireLatch = true; fireQueued = false; }
   // View model pose
   const scoped = !!w.def.scope && P.ads && w.reloadT <= 0 && camera.fov < 30;
-  for (const id in gunModels) { const on = id === w.def.id && !scoped; gunModels[id].visible = on; if (armRigs[id]) armRigs[id].visible = on; }
+  for (const id in gunModels) { const on = id === w.def.id && !scoped; gunModels[id].visible = on; if (armRigs[id]) armRigs[id].visible = on && !fpArms; }
+  if (fpArms) { fpArms.rig.visible = !scoped; poseFpArms(w.def.id); } // model arms replace the box arms once the soldier has loaded
   hud.scope.style.display = scoped ? 'block' : 'none'; hud.cross.style.visibility = scoped ? 'hidden' : 'visible';
   const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
   const hip = (VIEW[w.def.id] && VIEW[w.def.id].hip) || HIP_DEFAULT;
@@ -594,9 +611,64 @@ async function loadSoldier() {
       clips[name] = clip;
     }
     soldierProto = { scene: gltf.scene, clips, speed, scale, material: mesh.material };
+    try { buildFpArms(); } catch (err) { console.warn('first-person arms not built, keeping the box arms:', err && err.message); }
   } catch (err) { console.warn('soldier model not loaded, keeping the box figures:', err && err.message); }
 }
 loadSoldier();
+// ---- First-person arms cut out of the soldier model. The triangles skinned to the arm, forearm, hand, and finger bones
+// are kept; the upper-arm and forearm bones are re-parented straight under the gun group and aimed in code each frame
+// (shoulder -> elbow -> wrist), using the per-weapon hand and elbow points in ARMS. Fingers are curled by a fixed angle.
+let fpArms = null;
+const FP = {
+  curl: 1.1, curlAxis: [0, 0, 1], curlSignL: 1, palm: 0.08,
+  shoulder: { r: [0.05, -0.1, 0.6], l: [-0.42, -0.1, 0.6] }, // roughly where the shoulders are, in gun-group space
+};
+const _fa = new THREE.Vector3(), _fb = new THREE.Vector3(), _fc = new THREE.Vector3(), _fd = new THREE.Vector3(), _fq = new THREE.Quaternion(), _fe = new THREE.Euler();
+function buildFpArms() {
+  const src = skeletonClone(soldierProto.scene); let mesh = null; src.traverse((o) => { if (o.isSkinnedMesh) mesh = o; });
+  const keep = mesh.skeleton.bones.map((b) => /(Left|Right)(Arm|ForeArm|Hand)/.test(b.name));
+  const geo = mesh.geometry.clone(), si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, inside = new Uint8Array(si.count);
+  if (!geo.index) throw new Error('soldier mesh is not indexed');
+  for (let i = 0; i < si.count; i++) {
+    const b = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)], w = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)];
+    let k = 0; for (let j = 0; j < 4; j++) if (keep[b[j]]) k += w[j];
+    if (k <= 0.5) continue;
+    inside[i] = 1; // drop the influence of bones we do not animate, so the cut edge does not stretch toward the torso
+    sw.setXYZW(i, ...w.map((v, j) => (keep[b[j]] ? v / k : 0)));
+  }
+  const idx = geo.index.array, out = [];
+  for (let t = 0; t < idx.length; t += 3) if (inside[idx[t]] && inside[idx[t + 1]] && inside[idx[t + 2]]) out.push(idx[t], idx[t + 1], idx[t + 2]);
+  geo.setIndex(out);
+  const mat = soldierProto.material.clone(); mat.metalness = 0; mat.metalnessMap = null; mat.roughness = 0.85; mat.emissive.setHex(0x3a3a3a); mat.emissiveMap = mat.map;
+  mesh.geometry = geo; mesh.material = mat; mesh.frustumCulled = false;
+  const rig = new THREE.Group(), sides = {};
+  for (const [key, name] of [['r', 'Right'], ['l', 'Left']]) {
+    const arm = src.getObjectByName(`mixamorig${name}Arm`), fore = src.getObjectByName(`mixamorig${name}ForeArm`), hand = src.getObjectByName(`mixamorig${name}Hand`);
+    const side = sides[key] = { arm, fore, hand, vF: fore.position.clone(), vH: hand.position.clone(), handQ: hand.quaternion.clone(), fingers: [] };
+    hand.traverse((o) => { if (/Hand(Index|Middle|Ring|Pinky)[123]$/.test(o.name)) side.fingers.push([o, o.quaternion.clone()]); });
+    rig.add(arm); rig.add(fore); // adding the forearm to the rig detaches it from the upper arm; the hand stays its child
+  }
+  rig.add(mesh); rig.visible = false; gun.add(rig);
+  fpArms = { rig, sides, mesh };
+}
+function poseFpArms(id) {
+  const cfg = ARMS[id]; if (!fpArms || !cfg) return;
+  const S = soldierProto.scale;
+  for (const key of ['r', 'l']) {
+    const s = fpArms.sides[key], [h, el, roll = 0, wrist] = cfg[key];
+    _fa.set(h[0] - el[0], h[1] - el[1], h[2] - el[2]).normalize();                 // forearm direction, elbow -> wrist
+    _fb.set(...h).addScaledVector(_fa, -(s.vH.length() * S + FP.palm));             // elbow position; the ARMS point is the palm, not the wrist
+    s.fore.quaternion.setFromUnitVectors(_fc.copy(s.vH).normalize(), _fa).premultiply(_fq.setFromAxisAngle(_fa, roll));
+    s.fore.position.copy(_fb); s.fore.scale.setScalar(S);
+    _fd.copy(_fb).sub(_fc.set(...FP.shoulder[key])).normalize();                    // upper-arm direction, shoulder -> elbow
+    s.arm.quaternion.setFromUnitVectors(_fc.copy(s.vF).normalize(), _fd);
+    s.arm.position.copy(_fb).sub(_fc.copy(s.vF).multiplyScalar(S).applyQuaternion(s.arm.quaternion)); s.arm.scale.setScalar(S);
+    s.hand.quaternion.copy(s.handQ); if (wrist) s.hand.quaternion.multiply(_fq.setFromEuler(_fe.set(...wrist)));
+    _fc.set(...FP.curlAxis);
+    for (const [b, q0] of s.fingers) b.quaternion.copy(q0).multiply(_fq.setFromAxisAngle(_fc, FP.curl * (key === 'l' ? FP.curlSignL : 1)));
+  }
+}
+
 function soldierMat(type) {
   if (!soldierMats[type]) {
     const m = soldierMats[type] = soldierProto.material.clone();
@@ -750,7 +822,7 @@ function updateEnemy(e, dt) {
 function enemyShoot(e, dx, dz, dist, chestY) {
   const def = e.def, p = e.group.position;
   _v.set(p.x + dx * 0.6, 1.3 * def.scale, p.z + dz * 0.6);
-  const acc = def.acc * Math.max(0.25, Math.min(1, 1.15 - dist / def.range)) * (P.crouch ? 0.65 : 1) * (Math.hypot(P.vel.x, P.vel.z) > 6 ? 0.7 : 1);
+  const acc = RULES.enemyAccuracy * def.acc * Math.max(0.25, Math.min(1, 1.15 - dist / def.range)) * (P.crouch ? 0.65 : 1) * (Math.hypot(P.vel.x, P.vel.z) > 6 ? 0.7 : 1);
   flash(_v, 0xffd080, 0.3, 0.7, 0.06); sfx.enemy(dist);
   if (rand() < acc) { _v2.set(P.pos.x, chestY, P.pos.z); tracer(_v, _v2, true); damagePlayer(def.dmg, p.x, p.z); }
   else { _v2.set(P.pos.x + (rand() - 0.5) * 3 + dx * 8, chestY + (rand() - 0.3) * 1.6, P.pos.z + (rand() - 0.5) * 3 + dz * 8); tracer(_v, _v2, true); }
@@ -958,6 +1030,6 @@ setMode('menu');
 requestAnimationFrame(frame);
 
 // Test/debug hook: step() advances the simulation manually when the tab is in the background (rAF throttled)
-window.__game = { SOLDIER, placeHandGun, soldierReady: () => !!soldierProto, VIEW, loadViewModels, gun, S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys, openShop, closeShop, buy, toMenu, switchWeapon, setMode,
+window.__game = { FP, ARMS, poseFpArms, fpArms: () => fpArms, SOLDIER, placeHandGun, soldierReady: () => !!soldierProto, VIEW, loadViewModels, gun, S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys, openShop, closeShop, buy, toMenu, switchWeapon, setMode,
   setFiring: (v) => { firing = v; fireLatch = false; },
   step(n = 1, dt = 1 / 60) { for (let i = 0; i < n && S.mode === 'playing'; i++) { update(dt); updateFx(dt); } sky.position.copy(camera.position); renderer.render(scene, camera); } };
