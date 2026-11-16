@@ -81,7 +81,7 @@ This rewrites the import map in `index.html` so each module URL carries a hash o
    - `__game.spawnEnemy({type:'heavy',dir:'N'})` spawns an enemy.
    - `__game.S` shows the game state.
 4. To add an enemy type, add an entry to `ENEMY_TYPES` and use it in `WAVES[].units`. Its appearance is built in `spawnEnemy` in `main.js`.
-5. To swap or add a weapon model, put the GLB in `assets/models/` and edit the `VIEW` table in `main.js` (file name, real length, which way the barrel points, barrel height). Check it first in `tools/viewer.html`. The hands are placed per weapon in the `ARMS` table (palm point, elbow point, forearm roll). Untextured models are coloured by region in the `PAINT` table.
+5. To swap or add a weapon model, put the GLB in `assets/models/` and edit the `VIEW` table in `main.js` (file name, real length, which way the barrel points, barrel height). Check it first in `tools/viewer.html`. The hands are placed per weapon in the `ARMS` table (palm point, elbow point, forearm roll, hand shape), and the hand shapes themselves are in `FP.grips`. Untextured models are coloured by region in the `PAINT` table.
 6. To replace the soldier, put a rigged GLB with a Mixamo skeleton in `assets/models/` and edit the `SOLDIER` table in `main.js`: which clip index is run, aim, and death, the standing height, the tint per enemy type, and how the rifle sits in the right hand.
 7. To sell a new weapon, add it to `WEAPONS` with a `price` and add a matching entry to `SHOP`. Its view model and sound are in `main.js`.
 8. To add a wave, add an entry to `WAVES`. `dirs` accepts N, E, W, and S. No code changes are needed.

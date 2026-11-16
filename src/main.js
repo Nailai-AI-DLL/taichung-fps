@@ -315,11 +315,12 @@ gun.add(rifleModel, pistolModel, sniperModel, magnumModel);
 //   axis   height of the barrel axis as a fraction of the model's height (it is placed on the gun group's y = 0)
 //   rear   z of the back end of the gun in the gun group (positive is toward the camera)
 //   hip    optional gun position when not aiming (default 0.2, -0.19, -0.42); pistols sit higher and closer
+//   adsZ   optional distance from the eye when aiming (default -0.3); pistols are held farther out so the hands do not fill the view
 const VIEW = {
   m16:    { file: 'M16',         len: 1.00, muzzle:  1, axis: 0.70, rear: 0.40 },
-  m9:     { file: 'Beretta92',   len: 0.22, muzzle:  1, axis: 0.86, rear: 0.02, hip: [0.16, -0.115, -0.36] },
+  m9:     { file: 'Beretta92',   len: 0.22, muzzle:  1, axis: 0.86, rear: 0.02, hip: [0.16, -0.115, -0.36], adsZ: -0.44 },
   m24:    { file: 'M24',         len: 1.10, muzzle: -1, axis: 0.42, rear: 0.42 },
-  deagle: { file: 'DesertEagle', len: 0.27, muzzle: -1, axis: 0.84, rear: 0.03, hip: [0.16, -0.115, -0.36] },
+  deagle: { file: 'DesertEagle', len: 0.27, muzzle: -1, axis: 0.84, rear: 0.03, hip: [0.16, -0.115, -0.36], adsZ: -0.44 },
 };
 const HIP_DEFAULT = [0.2, -0.19, -0.42];
 const assetUrl = (p) => './' + p + (window.ASSET_V && window.ASSET_V[p] ? '?v=' + window.ASSET_V[p] : '');
@@ -367,11 +368,11 @@ loadViewModels();
 // First-person arms: box sleeves and gloves, one rig per weapon, attached to the gun so they follow recoil, reload, and aiming.
 // Each entry gives a palm point and an elbow point in gun-group space. The box arms (fallback) put a glove at the palm and run a sleeve toward the elbow.
 const ARMS = {
-  // [palm point, elbow point, forearm roll (model arms only)] per hand, in gun-group space
-  m16:    { r: [[0.012, -0.085, 0.085], [0.13, -0.3, 0.5], -1.57],   l: [[-0.005, -0.075, -0.235], [-0.42, -0.3, 0.4], 0] },
-  m24:    { r: [[0.012, -0.075, 0.07],  [0.13, -0.3, 0.5], -1.57],   l: [[-0.005, -0.06, -0.2],    [-0.42, -0.3, 0.4], 0] },
-  m9:     { r: [[0.004, -0.075, 0.01],  [0.09, -0.16, 0.4], -1.57],  l: [[-0.03, -0.085, 0.0],     [-0.26, -0.2, 0.36], 1.57] },
-  deagle: { r: [[0.004, -0.08, 0.01],   [0.09, -0.16, 0.4], -1.57],  l: [[-0.03, -0.09, 0.0],      [-0.26, -0.2, 0.36], 1.57] },
+  // [palm point, elbow point, forearm roll, wrist Euler, hand shape] per hand, in gun-group space (the last three apply to the model arms only)
+  m16:    { r: [[0.012, -0.085, 0.085], [0.13, -0.3, 0.5], -1.57],   l: [[-0.005, -0.075, -0.235], [-0.42, -0.3, 0.4], 0, null, 'hold'] },
+  m24:    { r: [[0.012, -0.075, 0.07],  [0.13, -0.3, 0.5], -1.57],   l: [[-0.005, -0.06, -0.2],    [-0.42, -0.3, 0.4], 0, null, 'hold'] },
+  m9:     { r: [[0.004, -0.075, 0.01],  [0.09, -0.16, 0.4], -1.57],  l: [[-0.03, -0.085, 0.0],     [-0.26, -0.2, 0.36], 1.57, null, 'support'] },
+  deagle: { r: [[0.004, -0.08, 0.01],   [0.09, -0.16, 0.4], -1.57],  l: [[-0.03, -0.09, 0.0],      [-0.26, -0.2, 0.36], 1.57, null, 'support'] },
 };
 // A little emissive keeps the arms readable when the camera faces away from the sun
 const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x5c6f47, emissive: 0x1c2415 }), gloveMat = new THREE.MeshLambertMaterial({ color: 0x3b3f37, emissive: 0x121310 }), armRigs = {};
@@ -528,7 +529,7 @@ function updateWeapons(dt) {
   hud.scope.style.display = scoped ? 'block' : 'none'; hud.cross.style.visibility = scoped ? 'hidden' : 'visible';
   const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
   const hip = (VIEW[w.def.id] && VIEW[w.def.id].hip) || HIP_DEFAULT;
-  const tx = ads ? 0 : hip[0], ty = ads ? (ADS_Y[w.def.id] ?? -0.06) : hip[1], tz = ads ? -0.3 : hip[2], k = Math.min(1, 16 * dt);
+  const tx = ads ? 0 : hip[0], ty = ads ? (ADS_Y[w.def.id] ?? -0.06) : hip[1], tz = ads ? ((VIEW[w.def.id] && VIEW[w.def.id].adsZ) || -0.3) : hip[2], k = Math.min(1, 16 * dt);
   gun.position.x += (tx - gun.position.x) * k; gun.position.y += (ty - gun.position.y) * k; gun.position.z += (tz - gun.position.z) * k;
   const bobK = ads ? 0.15 : 1, rl = w.reloadT > 0 ? Math.sin(Math.min(1, (w.def.reload - w.reloadT) / w.def.reload) * Math.PI) : 0;
   gun.position.x += Math.cos(P.bob) * 0.0012 * hs * bobK; gun.position.y += Math.abs(Math.sin(P.bob)) * 0.0012 * hs * bobK;
@@ -620,7 +621,15 @@ loadSoldier();
 // (shoulder -> elbow -> wrist), using the per-weapon hand and elbow points in ARMS. Fingers are curled by a fixed angle.
 let fpArms = null;
 const FP = {
-  curl: 1.1, curlAxis: [0, 0, 1], curlSignL: 1, palm: 0.08,
+  curlAxis: [0, 0, 1], palm: 0.08,
+  // Hand shapes. For the four fingers each entry is the bend of the three joints (radians, knuckle to fingertip);
+  // `rest` covers any finger without its own entry. The thumb's three joints take XYZ Euler angles instead.
+  grips: {
+    // Thumbs: negative X tucks the right thumb against the hand; the left hand is mirrored, so it takes positive X.
+    grip:    { rest: [0.9, 1.15, 0.7], Index: [0.35, 0.6, 0.35], Thumb: [[-0.5, 0, 0.1], [-0.3, 0, 0], [-0.2, 0, 0]] }, // right hand around a pistol grip, index finger along the trigger
+    support: { rest: [0.85, 1.1, 0.65], Thumb: [[0.5, 0, -0.1], [0.3, 0, 0], [0.2, 0, 0]] },                          // left hand wrapped over the firing hand on a pistol
+    hold:    { rest: [0.55, 0.85, 0.5], Thumb: [[0.5, 0, -0.1], [0.3, 0, 0], [0.2, 0, 0]] },                           // left hand under a handguard or around a foregrip
+  },
   shoulder: { r: [0.05, -0.1, 0.6], l: [-0.42, -0.1, 0.6] }, // roughly where the shoulders are, in gun-group space
 };
 const _fa = new THREE.Vector3(), _fb = new THREE.Vector3(), _fc = new THREE.Vector3(), _fd = new THREE.Vector3(), _fq = new THREE.Quaternion(), _fe = new THREE.Euler();
@@ -645,7 +654,7 @@ function buildFpArms() {
   for (const [key, name] of [['r', 'Right'], ['l', 'Left']]) {
     const arm = src.getObjectByName(`mixamorig${name}Arm`), fore = src.getObjectByName(`mixamorig${name}ForeArm`), hand = src.getObjectByName(`mixamorig${name}Hand`);
     const side = sides[key] = { arm, fore, hand, vF: fore.position.clone(), vH: hand.position.clone(), handQ: hand.quaternion.clone(), fingers: [] };
-    hand.traverse((o) => { if (/Hand(Index|Middle|Ring|Pinky)[123]$/.test(o.name)) side.fingers.push([o, o.quaternion.clone()]); });
+    hand.traverse((o) => { const m = /Hand(Index|Middle|Ring|Pinky|Thumb)([123])$/.exec(o.name); if (m) side.fingers.push({ b: o, q0: o.quaternion.clone(), finger: m[1], joint: +m[2] - 1 }); });
     rig.add(arm); rig.add(fore); // adding the forearm to the rig detaches it from the upper arm; the hand stays its child
   }
   rig.add(mesh); rig.visible = false; gun.add(rig);
@@ -655,7 +664,7 @@ function poseFpArms(id) {
   const cfg = ARMS[id]; if (!fpArms || !cfg) return;
   const S = soldierProto.scale;
   for (const key of ['r', 'l']) {
-    const s = fpArms.sides[key], [h, el, roll = 0, wrist] = cfg[key];
+    const s = fpArms.sides[key], [h, el, roll = 0, wrist, gripName] = cfg[key], G = FP.grips[gripName] || FP.grips.grip;
     _fa.set(h[0] - el[0], h[1] - el[1], h[2] - el[2]).normalize();                 // forearm direction, elbow -> wrist
     _fb.set(...h).addScaledVector(_fa, -(s.vH.length() * S + FP.palm));             // elbow position; the ARMS point is the palm, not the wrist
     s.fore.quaternion.setFromUnitVectors(_fc.copy(s.vH).normalize(), _fa).premultiply(_fq.setFromAxisAngle(_fa, roll));
@@ -665,7 +674,11 @@ function poseFpArms(id) {
     s.arm.position.copy(_fb).sub(_fc.copy(s.vF).multiplyScalar(S).applyQuaternion(s.arm.quaternion)); s.arm.scale.setScalar(S);
     s.hand.quaternion.copy(s.handQ); if (wrist) s.hand.quaternion.multiply(_fq.setFromEuler(_fe.set(...wrist)));
     _fc.set(...FP.curlAxis);
-    for (const [b, q0] of s.fingers) b.quaternion.copy(q0).multiply(_fq.setFromAxisAngle(_fc, FP.curl * (key === 'l' ? FP.curlSignL : 1)));
+    for (const f of s.fingers) {
+      const c = (G[f.finger] || G.rest)[f.joint];
+      if (f.finger === 'Thumb') f.b.quaternion.copy(f.q0).multiply(_fq.setFromEuler(_fe.set(c[0], c[1], c[2])));
+      else f.b.quaternion.copy(f.q0).multiply(_fq.setFromAxisAngle(_fc, c));
+    }
   }
 }
 
