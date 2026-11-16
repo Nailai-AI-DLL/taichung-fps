@@ -318,9 +318,9 @@ gun.add(rifleModel, pistolModel, sniperModel, magnumModel);
 //   adsZ   optional distance from the eye when aiming (default -0.3); pistols are held farther out so the hands do not fill the view
 const VIEW = {
   m16:    { file: 'M16',         len: 1.00, muzzle:  1, axis: 0.70, rear: 0.40 },
-  m9:     { file: 'Beretta92',   len: 0.22, muzzle:  1, axis: 0.86, rear: 0.02, hip: [0.16, -0.115, -0.36], adsZ: -0.44 },
+  m9:     { file: 'Beretta92',   len: 0.22, muzzle:  1, axis: 0.86, rear: 0.02, hip: [0.16, -0.115, -0.36], adsZ: -0.5 },
   m24:    { file: 'M24',         len: 1.10, muzzle: -1, axis: 0.42, rear: 0.42 },
-  deagle: { file: 'DesertEagle', len: 0.27, muzzle: -1, axis: 0.84, rear: 0.03, hip: [0.16, -0.115, -0.36], adsZ: -0.44 },
+  deagle: { file: 'DesertEagle', len: 0.27, muzzle: -1, axis: 0.84, rear: 0.03, hip: [0.16, -0.115, -0.36], adsZ: -0.5 },
 };
 const HIP_DEFAULT = [0.2, -0.19, -0.42];
 const assetUrl = (p) => './' + p + (window.ASSET_V && window.ASSET_V[p] ? '?v=' + window.ASSET_V[p] : '');
@@ -368,11 +368,26 @@ loadViewModels();
 // First-person arms: box sleeves and gloves, one rig per weapon, attached to the gun so they follow recoil, reload, and aiming.
 // Each entry gives a palm point and an elbow point in gun-group space. The box arms (fallback) put a glove at the palm and run a sleeve toward the elbow.
 const ARMS = {
-  // [palm point, elbow point, forearm roll, wrist Euler, hand shape] per hand, in gun-group space (the last three apply to the model arms only)
-  m16:    { r: [[0.012, -0.085, 0.085], [0.13, -0.3, 0.5], -1.57],   l: [[-0.005, -0.075, -0.235], [-0.42, -0.3, 0.4], 0, null, 'hold'] },
-  m24:    { r: [[0.012, -0.075, 0.07],  [0.13, -0.3, 0.5], -1.57],   l: [[-0.005, -0.06, -0.2],    [-0.42, -0.3, 0.4], 0, null, 'hold'] },
-  m9:     { r: [[0.004, -0.075, 0.01],  [0.09, -0.16, 0.4], -1.57],  l: [[-0.03, -0.085, 0.0],     [-0.26, -0.2, 0.36], 1.57, null, 'support'] },
-  deagle: { r: [[0.004, -0.08, 0.01],   [0.09, -0.16, 0.4], -1.57],  l: [[-0.03, -0.09, 0.0],      [-0.26, -0.2, 0.36], 1.57, null, 'support'] },
+  // Per hand, in gun-group space (x right, y up, -z toward the muzzle):
+  //   at       where the palm presses on the weapon        fingers  direction from the wrist to the knuckles
+  //   palm     the way the palm faces                        elbow    a point the forearm comes from (elbowAim: the same while aiming)
+  //   shape    a hand shape from FP.grips (model arms only; the box arms use only `at` and `elbow`)
+  m16: {
+    r: { at: [0.016, -0.09, 0.085],   fingers: [0, -0.35, -1],   palm: [-1, 0, 0], elbow: [0.14, -0.3, 0.5],   shape: 'grip' },
+    l: { at: [-0.016, -0.085, -0.235], fingers: [0, -0.3, -1],    palm: [1, 0, 0],  elbow: [-0.36, -0.3, 0.3],  shape: 'foregrip' },
+  },
+  m24: {
+    r: { at: [0.016, -0.08, 0.07],    fingers: [0, -0.35, -1],   palm: [-1, 0, 0], elbow: [0.14, -0.3, 0.5],   shape: 'grip' },
+    l: { at: [0, -0.05, -0.2],        fingers: [0.55, 0, -0.83], palm: [0, 1, 0],  elbow: [-0.4, -0.3, 0.35],  shape: 'hold' },
+  },
+  m9: {
+    r: { at: [0.014, -0.075, -0.005], fingers: [0, -0.25, -1],   palm: [-1, 0, 0], elbow: [0.1, -0.2, 0.45], elbowAim: [0.2, -0.42, 0.3],   shape: 'grip' },
+    l: { at: [-0.02, -0.09, -0.02],   fingers: [0.12, -0.45, -1], palm: [1, 0, 0.2], elbow: [-0.28, -0.26, 0.4], elbowAim: [-0.24, -0.44, 0.28], shape: 'support' },
+  },
+  deagle: {
+    r: { at: [0.016, -0.08, -0.005],  fingers: [0, -0.25, -1],   palm: [-1, 0, 0], elbow: [0.1, -0.2, 0.45], elbowAim: [0.2, -0.42, 0.3],   shape: 'grip' },
+    l: { at: [-0.022, -0.095, -0.02], fingers: [0.12, -0.45, -1], palm: [1, 0, 0.2], elbow: [-0.28, -0.26, 0.4], elbowAim: [-0.24, -0.44, 0.28], shape: 'support' },
+  },
 };
 // A little emissive keeps the arms readable when the camera faces away from the sun
 const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x5c6f47, emissive: 0x1c2415 }), gloveMat = new THREE.MeshLambertMaterial({ color: 0x3b3f37, emissive: 0x121310 }), armRigs = {};
@@ -385,7 +400,7 @@ function buildArm(parent, hand, elbow) {
   box(g, gloveMat, 0.09, 0.09, 0.025, 0, 0, 0.092); // cuff
   parent.add(g);
 }
-for (const id in ARMS) { const rig = armRigs[id] = new THREE.Group(); buildArm(rig, ARMS[id].r[0], ARMS[id].r[1]); buildArm(rig, ARMS[id].l[0], ARMS[id].l[1]); rig.visible = false; gun.add(rig); }
+for (const id in ARMS) { const rig = armRigs[id] = new THREE.Group(); buildArm(rig, ARMS[id].r.at, ARMS[id].r.elbow); buildArm(rig, ARMS[id].l.at, ARMS[id].l.elbow); rig.visible = false; gun.add(rig); }
 const muzzle = new THREE.Object3D(); gun.add(muzzle);
 const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc36a, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
 muzzleFlash.scale.setScalar(0.32); muzzleFlash.visible = false; muzzle.add(muzzleFlash);
@@ -523,12 +538,12 @@ function updateWeapons(dt) {
   if (w.reloadT > 0) fireQueued = false;
   else if ((firing || fireQueued) && (w.def.auto || !fireLatch || fireQueued) && fire()) { fireLatch = true; fireQueued = false; }
   // View model pose
+  const hip = (VIEW[w.def.id] && VIEW[w.def.id].hip) || HIP_DEFAULT;
   const scoped = !!w.def.scope && P.ads && w.reloadT <= 0 && camera.fov < 30;
   for (const id in gunModels) { const on = id === w.def.id && !scoped; gunModels[id].visible = on; if (armRigs[id]) armRigs[id].visible = on && !fpArms; }
-  if (fpArms) { fpArms.rig.visible = !scoped; poseFpArms(w.def.id); } // model arms replace the box arms once the soldier has loaded
+  if (fpArms) { fpArms.rig.visible = !scoped; poseFpArms(w.def.id, Math.min(1, Math.max(0, 1 - gun.position.x / hip[0]))); } // model arms replace the box arms once the soldier has loaded
   hud.scope.style.display = scoped ? 'block' : 'none'; hud.cross.style.visibility = scoped ? 'hidden' : 'visible';
   const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
-  const hip = (VIEW[w.def.id] && VIEW[w.def.id].hip) || HIP_DEFAULT;
   const tx = ads ? 0 : hip[0], ty = ads ? (ADS_Y[w.def.id] ?? -0.06) : hip[1], tz = ads ? ((VIEW[w.def.id] && VIEW[w.def.id].adsZ) || -0.3) : hip[2], k = Math.min(1, 16 * dt);
   gun.position.x += (tx - gun.position.x) * k; gun.position.y += (ty - gun.position.y) * k; gun.position.z += (tz - gun.position.z) * k;
   const bobK = ads ? 0.15 : 1, rl = w.reloadT > 0 ? Math.sin(Math.min(1, (w.def.reload - w.reloadT) / w.def.reload) * Math.PI) : 0;
@@ -617,22 +632,34 @@ async function loadSoldier() {
 }
 loadSoldier();
 // ---- First-person arms cut out of the soldier model. The triangles skinned to the arm, forearm, hand, and finger bones
-// are kept; the upper-arm and forearm bones are re-parented straight under the gun group and aimed in code each frame
-// (shoulder -> elbow -> wrist), using the per-weapon hand and elbow points in ARMS. Fingers are curled by a fixed angle.
+// are kept. Each hand is then placed directly: ARMS says where the palm touches the weapon, which way the palm faces, and
+// which way the fingers point; the hand bone is oriented to match, the forearm runs from an elbow point to the wrist with
+// its twist matched to the hand, and the upper arm follows from a shoulder point. Nothing about the skeleton's local axes
+// is assumed: the palm normal, finger direction, and every finger's bend axis are measured from the bind pose (a T-pose
+// with the palms facing down).
 let fpArms = null;
 const FP = {
-  curlAxis: [0, 0, 1], palm: 0.08,
-  // Hand shapes. For the four fingers each entry is the bend of the three joints (radians, knuckle to fingertip);
-  // `rest` covers any finger without its own entry. The thumb's three joints take XYZ Euler angles instead.
+  wristBack: 0.085, // metres from the palm contact point back to the wrist
+  palmDepth: 0.022, // metres from the palm surface to the middle of the hand
+  // Hand shapes: the bend of each finger's three joints in radians, knuckle to fingertip. `rest` covers fingers without
+  // their own entry. `thumb` is [swing toward the palm, bend of the two outer joints].
   grips: {
-    // Thumbs: negative X tucks the right thumb against the hand; the left hand is mirrored, so it takes positive X.
-    grip:    { rest: [0.9, 1.15, 0.7], Index: [0.35, 0.6, 0.35], Thumb: [[-0.5, 0, 0.1], [-0.3, 0, 0], [-0.2, 0, 0]] }, // right hand around a pistol grip, index finger along the trigger
-    support: { rest: [0.85, 1.1, 0.65], Thumb: [[0.5, 0, -0.1], [0.3, 0, 0], [0.2, 0, 0]] },                          // left hand wrapped over the firing hand on a pistol
-    hold:    { rest: [0.55, 0.85, 0.5], Thumb: [[0.5, 0, -0.1], [0.3, 0, 0], [0.2, 0, 0]] },                           // left hand under a handguard or around a foregrip
+    grip:     { rest: [1.25, 1.2, 0.6], Index: [0.25, 0.35, 0.2], thumb: [0.9, 0.35] },  // around a pistol grip, index finger along the frame
+    support:  { rest: [1.2, 1.15, 0.6], thumb: [0.8, 0.3] },                               // wrapped over the firing hand
+    foregrip: { rest: [1.25, 1.2, 0.6], thumb: [0.9, 0.35] },                              // around a vertical foregrip
+    hold:     { rest: [0.9, 1.05, 0.55], thumb: [0.4, 0.25] },                              // cupped under a handguard
   },
   shoulder: { r: [0.05, -0.1, 0.6], l: [-0.42, -0.1, 0.6] }, // roughly where the shoulders are, in gun-group space
 };
-const _fa = new THREE.Vector3(), _fb = new THREE.Vector3(), _fc = new THREE.Vector3(), _fd = new THREE.Vector3(), _fq = new THREE.Quaternion(), _fe = new THREE.Euler();
+const _fa = new THREE.Vector3(), _fb = new THREE.Vector3(), _fc = new THREE.Vector3(), _fd = new THREE.Vector3(), _fq = new THREE.Quaternion();
+const _fm = new THREE.Matrix4(), _fx = new THREE.Vector3(), _fn = new THREE.Vector3(), _fq2 = new THREE.Quaternion(), _fw = new THREE.Vector3();
+// Rotation whose Y axis is `y` and whose Z axis is `z` made perpendicular to it (both in the same space).
+function basisQuat(y, z, out) {
+  _fn.copy(z).addScaledVector(y, -z.dot(y));
+  if (_fn.lengthSq() < 1e-6) _fn.set(1, 0, 0).addScaledVector(y, -y.x); // z was parallel to y: pick any perpendicular
+  _fn.normalize(); _fx.crossVectors(y, _fn);
+  return out.setFromRotationMatrix(_fm.makeBasis(_fx, y, _fn));
+}
 function buildFpArms() {
   const src = skeletonClone(soldierProto.scene); let mesh = null; src.traverse((o) => { if (o.isSkinnedMesh) mesh = o; });
   const keep = mesh.skeleton.bones.map((b) => /(Left|Right)(Arm|ForeArm|Hand)/.test(b.name));
@@ -650,34 +677,61 @@ function buildFpArms() {
   geo.setIndex(out);
   const mat = soldierProto.material.clone(); mat.metalness = 0; mat.metalnessMap = null; mat.roughness = 0.85; mat.emissive.setHex(0x3a3a3a); mat.emissiveMap = mat.map;
   mesh.geometry = geo; mesh.material = mat; mesh.frustumCulled = false;
+
+  // Measure the bind pose before anything is moved.
+  src.updateMatrixWorld(true);
+  const down = new THREE.Vector3(0, -1, 0), wp = (o) => o.getWorldPosition(new THREE.Vector3());
+  const toLocal = (bone, v) => v.clone().applyQuaternion(bone.getWorldQuaternion(new THREE.Quaternion()).invert()).normalize();
   const rig = new THREE.Group(), sides = {};
   for (const [key, name] of [['r', 'Right'], ['l', 'Left']]) {
-    const arm = src.getObjectByName(`mixamorig${name}Arm`), fore = src.getObjectByName(`mixamorig${name}ForeArm`), hand = src.getObjectByName(`mixamorig${name}Hand`);
-    const side = sides[key] = { arm, fore, hand, vF: fore.position.clone(), vH: hand.position.clone(), handQ: hand.quaternion.clone(), fingers: [] };
-    hand.traverse((o) => { const m = /Hand(Index|Middle|Ring|Pinky|Thumb)([123])$/.exec(o.name); if (m) side.fingers.push({ b: o, q0: o.quaternion.clone(), finger: m[1], joint: +m[2] - 1 }); });
+    const get = (n) => src.getObjectByName(`mixamorig${name}${n}`);
+    const arm = get('Arm'), fore = get('ForeArm'), hand = get('Hand');
+    const fingersW = wp(get('HandMiddle1')).sub(wp(hand)).normalize();   // wrist -> knuckles, in world space
+    const side = sides[key] = {
+      arm, fore, hand, vF: fore.position.clone(), vH: hand.position.clone(), fingers: [],
+      handLocal: basisQuat(toLocal(hand, fingersW), toLocal(hand, down), new THREE.Quaternion()).invert(),
+      foreLocal: basisQuat(fore.position.clone().set(0, 0, 0).copy(hand.position).normalize(), toLocal(fore, down), new THREE.Quaternion()).invert(),
+    };
+    hand.traverse((o) => {
+      const m = /Hand(Index|Middle|Ring|Pinky|Thumb)([123])$/.exec(o.name); if (!m) return;
+      const dir = wp(o.children[0] || o).sub(wp(o)).normalize(), f = { b: o, q0: o.quaternion.clone(), finger: m[1], joint: +m[2] - 1 };
+      // Turning about (direction x palm normal) swings the bone toward the palm, whichever hand it is.
+      f.bend = toLocal(o, new THREE.Vector3().crossVectors(dir, down));
+      if (m[1] === 'Thumb' && m[2] === '1') { // the thumb's first joint swings around the hand's long axis to oppose the fingers
+        const sign = Math.sign(new THREE.Vector3().crossVectors(fingersW, dir).dot(down)) || 1;
+        f.swing = toLocal(o, fingersW.clone().multiplyScalar(sign));
+      }
+      side.fingers.push(f);
+    });
     rig.add(arm); rig.add(fore); // adding the forearm to the rig detaches it from the upper arm; the hand stays its child
   }
   rig.add(mesh); rig.visible = false; gun.add(rig);
   fpArms = { rig, sides, mesh };
 }
-function poseFpArms(id) {
+function poseFpArms(id, aim = 0) {
   const cfg = ARMS[id]; if (!fpArms || !cfg) return;
   const S = soldierProto.scale;
   for (const key of ['r', 'l']) {
-    const s = fpArms.sides[key], [h, el, roll = 0, wrist, gripName] = cfg[key], G = FP.grips[gripName] || FP.grips.grip;
-    _fa.set(h[0] - el[0], h[1] - el[1], h[2] - el[2]).normalize();                 // forearm direction, elbow -> wrist
-    _fb.set(...h).addScaledVector(_fa, -(s.vH.length() * S + FP.palm));             // elbow position; the ARMS point is the palm, not the wrist
-    s.fore.quaternion.setFromUnitVectors(_fc.copy(s.vH).normalize(), _fa).premultiply(_fq.setFromAxisAngle(_fa, roll));
-    s.fore.position.copy(_fb); s.fore.scale.setScalar(S);
-    _fd.copy(_fb).sub(_fc.set(...FP.shoulder[key])).normalize();                    // upper-arm direction, shoulder -> elbow
-    s.arm.quaternion.setFromUnitVectors(_fc.copy(s.vF).normalize(), _fd);
-    s.arm.position.copy(_fb).sub(_fc.copy(s.vF).multiplyScalar(S).applyQuaternion(s.arm.quaternion)); s.arm.scale.setScalar(S);
-    s.hand.quaternion.copy(s.handQ); if (wrist) s.hand.quaternion.multiply(_fq.setFromEuler(_fe.set(...wrist)));
-    _fc.set(...FP.curlAxis);
+    const s = fpArms.sides[key], c = cfg[key], G = FP.grips[c.shape] || FP.grips.grip;
+    _fa.set(...c.fingers).normalize();                                              // wrist -> knuckles
+    _fb.set(...c.palm); _fb.addScaledVector(_fa, -_fb.dot(_fa)).normalize();        // palm normal, perpendicular to the fingers
+    basisQuat(_fa, _fb, _fq2).multiply(s.handLocal);                                // hand orientation in gun-group space
+    _fw.set(...c.at).addScaledVector(_fb, -FP.palmDepth).addScaledVector(_fa, -FP.wristBack); // wrist position
+    _fd.set(...c.elbow); if (c.elbowAim) _fd.lerp(_fx.set(...c.elbowAim), aim);     // the elbows drop while aiming so the forearms clear the view
+    _fc.copy(_fw).sub(_fd).normalize();                                             // forearm direction, elbow -> wrist
+    _fd.copy(_fw).addScaledVector(_fc, -s.vH.length() * S);                         // elbow position
+    basisQuat(_fc, _fb, s.fore.quaternion).multiply(s.foreLocal);                   // forearm twisted to agree with the hand
+    s.fore.position.copy(_fd); s.fore.scale.setScalar(S);
+    s.hand.quaternion.copy(s.fore.quaternion).invert().multiply(_fq2);
+    _fa.copy(_fd).sub(_fx.set(...FP.shoulder[key])).normalize();                    // upper-arm direction, shoulder -> elbow
+    s.arm.quaternion.setFromUnitVectors(_fx.copy(s.vF).normalize(), _fa);
+    s.arm.position.copy(_fd).sub(_fx.copy(s.vF).multiplyScalar(S).applyQuaternion(s.arm.quaternion)); s.arm.scale.setScalar(S);
     for (const f of s.fingers) {
-      const c = (G[f.finger] || G.rest)[f.joint];
-      if (f.finger === 'Thumb') f.b.quaternion.copy(f.q0).multiply(_fq.setFromEuler(_fe.set(c[0], c[1], c[2])));
-      else f.b.quaternion.copy(f.q0).multiply(_fq.setFromAxisAngle(_fc, c));
+      f.b.quaternion.copy(f.q0);
+      if (f.finger === 'Thumb') {
+        if (f.swing) f.b.quaternion.multiply(_fq.setFromAxisAngle(f.swing, G.thumb[0]));
+        else f.b.quaternion.multiply(_fq.setFromAxisAngle(f.bend, G.thumb[1]));
+      } else f.b.quaternion.multiply(_fq.setFromAxisAngle(f.bend, (G[f.finger] || G.rest)[f.joint]));
     }
   }
 }
