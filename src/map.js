@@ -1,6 +1,6 @@
 // Stylized map data for Taichung's 7th Redevelopment Zone (pure data, no three.js).
 // Note: road names and landmarks are real, but positions, sizes, and building counts are arranged for gameplay, not surveyed.
-import { mulberry32, HALF } from './core.js';
+import { mulberry32, HALF, indexColliders } from './core.js';
 
 // axis 'x' is an east-west road (at z=c); 'z' is a north-south road (at x=c). North is -z.
 export const ROADS = [
@@ -161,5 +161,6 @@ export function buildMap(seed = 7) {
   colliders.push({ minX: -HALF - 2, maxX: -E, minY: 0, maxY: 60, minZ: -HALF, maxZ: HALF, kind: 'bound' });
   colliders.push({ minX: E, maxX: HALF + 2, minY: 0, maxY: 60, minZ: -HALF, maxZ: HALF, kind: 'bound' });
 
+  indexColliders(colliders);
   return { buildings, props, trees, blocks, labels, decos, colliders, roads: ROADS, spawns: SPAWNS, playerStart: PLAYER_START, supply: SUPPLY_POINT };
 }

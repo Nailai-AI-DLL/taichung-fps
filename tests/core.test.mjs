@@ -116,3 +116,21 @@ test('cache busting: index.html carries the current content hash of every module
   assert.equal(html, stamped(html), 'index.html is out of date. Run: npm run stamp');
   for (const f of MODULES) assert.match(html, new RegExp(`"\\./${f.replace(/[.]/g, '\\.')}\\?v=[0-9a-f]{8}"`), `${f} is not versioned`);
 });
+
+test('spatial index: accelerated raycastWorld, resolveCircle, and groundAt match linear scan', () => {
+  const m = buildMap();
+  const indexed = m.colliders;
+  const plain = indexed.slice(); // plain copy without _spatial
+  const rng = mulberry32(99);
+  for (let i = 0; i < 500; i++) {
+    const ox = (rng() - 0.5) * 410, oy = rng() * 25, oz = (rng() - 0.5) * 410;
+    const dx = (rng() - 0.5) * 180, dy = (rng() - 0.5) * 20, dz = (rng() - 0.5) * 180;
+    const tA = raycastWorld(ox, oy, oz, dx, dy, dz, indexed);
+    const tB = raycastWorld(ox, oy, oz, dx, dy, dz, plain);
+    assert.ok(Math.abs(tA - tB) < 1e-9, `raycast mismatch at i=${i}: ${tA} vs ${tB}`);
+    const pA = resolveCircle({ x: ox, z: oz }, 0.4, 0, 1.7, indexed);
+    const pB = resolveCircle({ x: ox, z: oz }, 0.4, 0, 1.7, plain);
+    assert.ok(Math.hypot(pA.x - pB.x, pA.z - pB.z) < 1e-9, `resolveCircle mismatch at i=${i}`);
+    assert.equal(groundAt(ox, oz, 2.5, indexed), groundAt(ox, oz, 2.5, plain));
+  }
+});

@@ -9,7 +9,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/loaders/GLTFLoader.js';
 const q = new URLSearchParams(location.search);
-const names = (q.get('m') || 'M16,M24,Beretta92,DesertEagle,army').split(',');
+const names = (q.get('m') || 'M16,M24,Beretta92,DesertEagle,soldier').split(',');
 const yaw = (+q.get('yaw') || 0) * Math.PI / 180, pitch = (+(q.get('pitch') ?? 15)) * Math.PI / 180;
 const r = new THREE.WebGLRenderer({ antialias: true }); r.setSize(innerWidth, innerHeight); document.body.appendChild(r.domElement);
 const scene = new THREE.Scene(); scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2.5)); const d = new THREE.DirectionalLight(0xffffff, 2); d.position.set(2, 3, 4); scene.add(d);

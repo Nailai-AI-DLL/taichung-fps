@@ -1,466 +1,63 @@
+// Main game entry point: wires world, audio, HUD, weapons, enemies, pickups, waves, shop, and input.
 import * as THREE from '../vendor/three.module.min.js';
-import { raycastWorld, resolveCircle, groundAt, buildGrid, flowField, flowTarget, cellIx, GRID_N, lerpAngle } from './core.js';
+import { resolveCircle, groundAt, buildGrid, flowField, cellIx, GRID_N } from './core.js';
 import { buildMap } from './map.js';
-import { GLTFLoader } from '../vendor/loaders/GLTFLoader.js';
-import { clone as skeletonClone } from '../vendor/utils/SkeletonUtils.js';
-import { PLAYER as PL, WEAPONS, SHOP, GRENADE, ENEMY_TYPES, RULES, WAVES, STORY, expandWave } from './config.js';
+import { PLAYER as PL, RULES, WAVES, STORY, expandWave } from './config.js';
+import { CFG, initAudio, bindSettingsUI, sfx } from './audio.js';
+import { createScene, buildWorld, createFxPool, lam, box, glowTex } from './world.js';
+import { createHud } from './hud.js';
+import { createShop } from './shop.js';
+import { VIEW, ARMS, FP, createWeapons } from './weapons.js';
+import { SOLDIER, createEnemies } from './enemies.js';
 
 const $ = (id) => document.getElementById(id);
-const NOLOCK = new URLSearchParams(location.search).has('nolock'); // for automated tests: do not pause when pointer lock is lost
-const rand = Math.random;
+const NOLOCK = new URLSearchParams(location.search).has('nolock');
 
-// ============================================================ Rendering
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
-$('game').appendChild(renderer.domElement);
-const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x7d6a68, 50, 430);
-const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 1600);
-camera.rotation.order = 'YXZ';
-scene.add(camera);
-addEventListener('resize', () => {
-  renderer.setSize(innerWidth, innerHeight);
-  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
-});
-
-// Dusk sky (horizon colour matches the fog)
-const sky = new THREE.Mesh(new THREE.SphereGeometry(1200, 24, 12), new THREE.ShaderMaterial({
-  side: THREE.BackSide, depthWrite: false,
-  vertexShader: 'varying vec3 v;void main(){v=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-  fragmentShader: `varying vec3 v;void main(){float h=clamp(v.y,0.,1.);
-    vec3 hor=vec3(.49,.416,.408),top=vec3(.09,.12,.21),glow=vec3(.95,.5,.25);
-    float sun=pow(max(dot(normalize(v),normalize(vec3(-.8,.1,.35))),0.),5.);
-    vec3 c=mix(hor,top,pow(h,.42))+glow*sun*.75*(1.-h);gl_FragColor=vec4(c,1.);}`,
-}));
-scene.add(sky);
-scene.add(new THREE.HemisphereLight(0xa9b6d6, 0x4a3d34, 2.3));
-const sun = new THREE.DirectionalLight(0xffb27a, 2.4);
-sun.position.set(-80, 40, 35); scene.add(sun);
-
-// ============================================================ Texture helpers
-const cv = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
-function canvasTex(c, repeat) {
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
-  if (repeat) { t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4; }
-  return t;
-}
-function radialTex() {
-  const c = cv(64, 64), x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.4, 'rgba(255,255,255,.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
-  x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
-}
-const glowTex = radialTex();
-
-// Facades: one tile = 16 m wide x 14 m tall (4x4 windows); wartime blackout, so few are lit
-const FACADE = {
-  res: { base: '#8a8073', win: '#1d2630', pad: [12, 14, 40, 30], sill: '#a59a8a', lit: 0.07 },
-  office: { base: '#3f4d5b', win: '#172330', pad: [4, 4, 56, 56], sill: null, lit: 0.05 },
-  gov: { base: '#929b9f', win: '#24323c', pad: [8, 6, 48, 46], sill: null, lit: 0.04 },
-  mall: { base: '#7b736e', win: '#5f5852', pad: [2, 22, 60, 26], sill: null, lit: 0 },
-  opera: { base: '#d2cdc3', win: '#26323a', pad: [0, 0, 0, 0], sill: null, lit: 0 },
-};
-function facadeMat(style) {
-  const f = FACADE[style], a = cv(256, 256), b = cv(256, 256), x = a.getContext('2d'), e = b.getContext('2d');
-  x.fillStyle = f.base; x.fillRect(0, 0, 256, 256); e.fillStyle = '#000'; e.fillRect(0, 0, 256, 256);
-  if (style === 'opera') { // Theater: curved glass openings in a white wall
-    x.fillStyle = f.win;
-    x.beginPath(); x.ellipse(128, 250, 92, 170, 0, Math.PI, 0); x.fill();
-    x.beginPath(); x.ellipse(0, 0, 44, 70, 0, 0, Math.PI * 2); x.ellipse(256, 0, 44, 70, 0, 0, Math.PI * 2); x.fill();
-    x.fillStyle = f.base; x.fillRect(0, 0, 3, 3);
-  } else {
-    for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
-      const [px, py, pw, ph] = f.pad, X = c * 64 + px, Y = r * 64 + py;
-      const lit = rand() < f.lit;
-      x.fillStyle = lit ? '#ffcf87' : f.win; x.fillRect(X, Y, pw, ph);
-      if (lit) { e.fillStyle = '#c08c48'; e.fillRect(X, Y, pw, ph); }
-      else { x.fillStyle = 'rgba(255,255,255,.06)'; x.fillRect(X, Y, pw, ph * 0.35); }
-      if (f.sill) { x.fillStyle = f.sill; x.fillRect(c * 64 + 6, Y + ph + 4, 52, 5); }
-    }
-  }
-  return new THREE.MeshLambertMaterial({ map: canvasTex(a, true), emissive: 0xffffff, emissiveMap: canvasTex(b, true) });
-}
-// Scale UVs by the real wall size so every building of a style shares one material
-function facadeBox(w, h, d) {
-  const g = new THREE.BoxGeometry(w, h, d), uv = g.attributes.uv;
-  for (let f = 0; f < 6; f++) for (let i = 0; i < 4; i++) {
-    const k = f * 4 + i;
-    if (f === 2 || f === 3) uv.setXY(k, 0.004, 0.004); // roof samples the base colour
-    else uv.setXY(k, uv.getX(k) * (f < 2 ? d : w) / 16, uv.getY(k) * h / 14);
-  }
-  return g;
-}
-
-// ============================================================ World
+// ============================================================ Scene & World
+const { renderer, scene, camera, sky, updateSun } = createScene($('game'));
 const MAP = buildMap();
 const colliders = MAP.colliders;
 const grid = buildGrid(colliders);
 const flow = new Int16Array(GRID_N * GRID_N);
-const G1 = new THREE.BoxGeometry(1, 1, 1);
-const matCache = new Map();
-const lam = (color) => { let m = matCache.get(color); if (!m) matCache.set(color, m = new THREE.MeshLambertMaterial({ color })); return m; };
-function box(parent, mat, sx, sy, sz, x, y, z) {
-  const m = new THREE.Mesh(G1, mat); m.scale.set(sx, sy, sz); m.position.set(x, y, z); parent.add(m); return m;
-}
+const { updateSmoke } = buildWorld(scene, MAP);
+const fx = createFxPool(scene);
+const hud = createHud();
 
-(function buildWorld() {
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(2600, 2600), lam(0x2b2c2f));
-  ground.rotation.x = -Math.PI / 2; scene.add(ground);
-  for (const b of MAP.blocks) box(scene, lam(b.green ? 0x3f5c36 : 0x6d6964), b.x1 - b.x0, 0.06, b.z1 - b.z0, (b.x0 + b.x1) / 2, 0.03, (b.z0 + b.z1) / 2);
-
-  // Lane markings
-  const dashGeo = new THREE.PlaneGeometry(3, 0.22); dashGeo.rotateX(-Math.PI / 2);
-  const dashes = new THREE.InstancedMesh(dashGeo, new THREE.MeshBasicMaterial({ color: 0xcfc8a8 }), MAP.roads.length * 52);
-  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), Qz = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), V = new THREE.Vector3(), S1 = new THREE.Vector3(1, 1, 1);
-  let n = 0;
-  for (const r of MAP.roads) for (let t = -204; t < 204; t += 8) {
-    const off = r.name === 'Taiwan Blvd' ? 8 : 0; // the boulevard has a median, so the line sits to one side
-    V.set(r.axis === 'x' ? t : r.c + off, 0.02, r.axis === 'x' ? r.c + off : t);
-    M.compose(V, r.axis === 'x' ? Q : Qz, S1); dashes.setMatrixAt(n++, M);
-  }
-  dashes.count = n; scene.add(dashes);
-  box(scene, lam(0x4d5a42), 400, 0.12, 3, 0, 0.06, -125); // median
-
-  // Buildings
-  const fm = {}; for (const s of Object.keys(FACADE)) fm[s] = facadeMat(s);
-  for (const b of MAP.buildings) {
-    const m = new THREE.Mesh(facadeBox(b.w, b.h, b.d), fm[b.style]); m.position.set(b.x, b.h / 2, b.z); scene.add(m);
-  }
-  for (const d of MAP.decos) {
-    if (d.type === 'beam') { const m = new THREE.Mesh(facadeBox(d.w, d.h, d.d), fm.gov); m.position.set(d.x, d.y, d.z); scene.add(m); }
-    if (d.type === 'pond') { const m = new THREE.Mesh(new THREE.CircleGeometry(d.r, 40), lam(0x2d4c5e)); m.rotation.x = -Math.PI / 2; m.scale.x = 1.5; m.position.set(d.x, 0.08, d.z); scene.add(m); }
-  }
-  // Distant skyline (silhouettes only, no collision)
-  const far = lam(0x3b414b);
-  for (let i = 0; i < 90; i++) {
-    const a = rand() * Math.PI * 2, r = 250 + rand() * 260, x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.max(Math.abs(x), Math.abs(z)) < 232) continue;
-    const h = 30 + rand() * 130, w = 22 + rand() * 30;
-    box(scene, far, w, h, w * (0.7 + rand() * 0.6), x, h / 2, z);
-  }
-
-  // Landmark signs
-  for (const l of MAP.labels) {
-    const px = 96, font = `900 ${px}px system-ui,"Helvetica Neue",Arial,sans-serif`, mc = cv(8, 8).getContext('2d'); mc.font = font;
-    const c = cv(Math.ceil(mc.measureText(l.text).width) + 70, px + 36), x = c.getContext('2d');
-    x.font = font; x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.fillStyle = 'rgba(11,14,18,.55)'; x.fillRect(0, 0, c.width, c.height);
-    x.fillStyle = '#f1ead8'; x.fillText(l.text, c.width / 2, c.height / 2 + 4);
-    const h = l.size * 1.35, m = new THREE.Mesh(new THREE.PlaneGeometry(h * c.width / c.height, h), new THREE.MeshBasicMaterial({ map: canvasTex(c), transparent: true }));
-    m.position.set(l.x, l.y, l.z); m.rotation.y = l.ry; scene.add(m);
-  }
-
-  // Cover
-  const glass = lam(0x161b22), tire = lam(0x1a1a1a);
-  for (const p of MAP.props) {
-    if (p.type === 'car') {
-      const alongX = p.w > p.d;
-      box(scene, lam(p.color), p.w, p.h * 0.5, p.d, p.x, 0.22 + p.h * 0.25, p.z);
-      box(scene, glass, alongX ? p.w * 0.55 : p.w * 0.9, p.h * 0.36, alongX ? p.d * 0.9 : p.d * 0.55, p.x, p.h * 0.5 + 0.22 + p.h * 0.18, p.z);
-      box(scene, tire, alongX ? p.w * 0.78 : p.w * 1.02, 0.5, alongX ? p.d * 1.02 : p.d * 0.78, p.x, 0.25, p.z);
-    } else if (p.type === 'bus') {
-      const alongX = p.w > p.d;
-      box(scene, lam(p.color), p.w, p.h - 0.3, p.d, p.x, 0.3 + (p.h - 0.3) / 2, p.z);
-      box(scene, glass, alongX ? p.w * 0.94 : p.w * 1.02, 0.9, alongX ? p.d * 1.02 : p.d * 0.94, p.x, p.h * 0.66, p.z);
-    } else {
-      box(scene, lam(p.color), p.w, p.h, p.d, p.x, p.h / 2, p.z);
-      if (p.type === 'sandbag') box(scene, lam(0x7a6a48), p.w * 0.96, 0.06, p.d * 0.96, p.x, p.h * 0.5, p.z).scale.multiplyScalar(1.04);
-    }
-  }
-
-  // Trees (instanced)
-  const T = MAP.trees, trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.24, 2.6, 6), lam(0x4a3b2c), T.length);
-  const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1.9, 0), new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true }), T.length);
-  const col = new THREE.Color(), Sv = new THREE.Vector3(), Qr = new THREE.Quaternion();
-  T.forEach((t, i) => {
-    M.compose(V.set(t.x, 1.3 * t.s, t.z), Q, Sv.setScalar(t.s)); trunk.setMatrixAt(i, M);
-    Qr.setFromAxisAngle(V.set(0, 1, 0), rand() * 6);
-    M.compose(V.set(t.x, 3.6 * t.s, t.z), Qr, Sv.set(t.s, t.s * (0.85 + rand() * 0.4), t.s)); crown.setMatrixAt(i, M);
-    col.setHex(t.red ? 0xa63a26 : 0x3f6a36).offsetHSL((rand() - 0.5) * 0.03, 0, (rand() - 0.5) * 0.08); crown.setColorAt(i, col);
-  });
-  scene.add(trunk, crown);
-
-  // Command post flagpole
-  const fc = cv(180, 120), fx = fc.getContext('2d');
-  fx.fillStyle = '#d0202a'; fx.fillRect(0, 0, 180, 120); fx.fillStyle = '#10237a'; fx.fillRect(0, 0, 90, 60);
-  fx.fillStyle = '#fff'; fx.translate(45, 30);
-  for (let i = 0; i < 12; i++) { fx.rotate(Math.PI / 6); fx.beginPath(); fx.moveTo(-4.2, -13); fx.lineTo(0, -24); fx.lineTo(4.2, -13); fx.fill(); }
-  fx.beginPath(); fx.arc(0, 0, 11, 0, 7); fx.fill(); fx.strokeStyle = '#10237a'; fx.lineWidth = 2; fx.stroke();
-  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 7, 6), lam(0xb8b8b8)); pole.position.set(7.5, 3.5, 26); scene.add(pole);
-  const flag = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.6), new THREE.MeshBasicMaterial({ map: canvasTex(fc), side: THREE.DoubleSide }));
-  flag.position.set(8.75, 6.1, 26); scene.add(flag);
-})();
-
-// Distant smoke columns
-const smokes = [];
-for (const [x, z] of [[-240, -250], [270, -110], [130, 300], [-310, 150], [40, -330], [-150, 320]]) {
-  const fire = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff7a2a, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, opacity: 0.8 }));
-  fire.position.set(x, 14, z); fire.scale.setScalar(60); scene.add(fire);
-  for (let i = 0; i < 7; i++) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0x0f0f10, transparent: true, depthWrite: false, fog: false }));
-    scene.add(s); smokes.push({ s, x, z, o: i / 7, sp: 0.035 + rand() * 0.01 });
-  }
-}
-function updateSmoke(t) {
-  for (const k of smokes) {
-    const u = (t * k.sp + k.o) % 1;
-    k.s.position.set(k.x + u * 70, 18 + u * 190, k.z + u * 25);
-    k.s.scale.setScalar(50 + u * 130); k.s.material.opacity = 0.5 * Math.sin(u * Math.PI);
-  }
-}
-
-// ============================================================ Audio (all synthesized with Web Audio)
-let AC = null, master = null, noiseBuf = null;
-function initAudio() {
-  if (AC) { AC.resume(); return; }
-  try {
-    AC = new (window.AudioContext || window.webkitAudioContext)();
-    master = AC.createGain(); master.gain.value = 0.45; master.connect(AC.destination);
-    noiseBuf = AC.createBuffer(1, AC.sampleRate, AC.sampleRate);
-    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = rand() * 2 - 1;
-  } catch { AC = null; }
-}
-function noise(vol, dur, freq, type = 'lowpass') {
-  if (!AC || vol < 0.005) return;
-  const s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain(), t = AC.currentTime;
-  s.buffer = noiseBuf; s.playbackRate.value = 0.7 + rand() * 0.6; f.type = type; f.frequency.value = freq;
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  s.connect(f).connect(g).connect(master); s.start(t, rand() * 0.5, dur + 0.02);
-}
-function tone(f0, f1, dur, vol, type = 'sine') {
-  if (!AC) return;
-  const o = AC.createOscillator(), g = AC.createGain(), t = AC.currentTime;
-  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t + dur);
-  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-  o.connect(g).connect(master); o.start(t); o.stop(t + dur + 0.02);
-}
-const sfx = {
-  rifle() { noise(0.55, 0.13, 3200); tone(160, 50, 0.09, 0.4, 'square'); },
-  pistol() { noise(0.45, 0.09, 4500); tone(240, 70, 0.06, 0.3, 'square'); },
-  sniper() { noise(0.85, 0.4, 1700); tone(130, 34, 0.28, 0.6, 'square'); },
-  magnum() { noise(0.7, 0.2, 2600); tone(190, 45, 0.14, 0.5, 'square'); },
-  enemy(d) { const v = 0.35 / (1 + d / 18); noise(v, 0.12, 1700); },
-  boom(d = 0) { const v = 1 / (1 + d / 30); noise(0.9 * v, 1.0, 600); tone(90, 28, 0.6, 0.8 * v); },
-  hit() { tone(1700, 1500, 0.035, 0.18, 'square'); },
-  head() { tone(2500, 1900, 0.07, 0.22, 'square'); },
-  kill() { tone(700, 1050, 0.1, 0.16, 'triangle'); },
-  empty() { tone(900, 800, 0.03, 0.12, 'square'); },
-  reload() { noise(0.2, 0.04, 2500, 'highpass'); setTimeout(() => noise(0.25, 0.05, 1800, 'highpass'), 380); },
-  hurt() { tone(130, 60, 0.16, 0.5); noise(0.2, 0.1, 500); },
-  pick() { tone(620, 930, 0.12, 0.2, 'triangle'); },
-  radio() { tone(1250, 1250, 0.06, 0.07, 'square'); setTimeout(() => tone(1650, 1650, 0.06, 0.07, 'square'), 90); },
-  drone(d) { tone(210, 190, 0.12, 0.1 / (1 + d / 10), 'sawtooth'); },
-};
-
-// ============================================================ Effect pools
-const tracerMatP = new THREE.LineBasicMaterial({ color: 0xffe2a0 }), tracerMatE = new THREE.LineBasicMaterial({ color: 0xa8ffb0 });
-const tracers = Array.from({ length: 48 }, () => {
-  const l = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)), tracerMatP);
-  l.visible = false; l.frustumCulled = false; l.userData.life = 0; scene.add(l); return l;
-});
-let tracerI = 0;
-function tracer(a, b, enemy) {
-  const l = tracers[tracerI = (tracerI + 1) % tracers.length], p = l.geometry.attributes.position;
-  p.setXYZ(0, a.x, a.y, a.z); p.setXYZ(1, b.x, b.y, b.z); p.needsUpdate = true;
-  l.material = enemy ? tracerMatE : tracerMatP; l.visible = true; l.userData.life = 0.07;
-}
-const flashes = Array.from({ length: 56 }, () => {
-  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-  s.visible = false; s.userData = { life: 0, max: 1, s0: 1, s1: 1 }; scene.add(s); return s;
-});
-let flashI = 0;
-function flash(pos, color, s0, s1, life) {
-  const s = flashes[flashI = (flashI + 1) % flashes.length];
-  s.position.copy(pos); s.material.color.setHex(color); s.material.opacity = 1; s.scale.setScalar(s0);
-  s.userData.life = s.userData.max = life; s.userData.s0 = s0; s.userData.s1 = s1; s.visible = true;
-}
-function updateFx(dt) {
-  for (const l of tracers) if (l.visible && (l.userData.life -= dt) <= 0) l.visible = false;
-  for (const s of flashes) if (s.visible) {
-    const u = s.userData; u.life -= dt;
-    if (u.life <= 0) { s.visible = false; continue; }
-    const k = 1 - u.life / u.max; s.scale.setScalar(u.s0 + (u.s1 - u.s0) * k); s.material.opacity = 1 - k * k;
-  }
-}
-
-// ============================================================ State
+// ============================================================ Shared State
 const S = { mode: 'menu', wave: -1, queue: [], spawnT: 0, interT: 0, time: 0, kills: 0, heads: 0, shots: 0, hits: 0, flowT: 0, alive: 0, money: 0, earned: 0 };
 const P = { pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: 0, hp: PL.hp, eye: PL.eye, crouch: false, onGround: true, lastHurt: -99, wi: 0, grenades: PL.grenades, ads: false, bloom: 0, bob: 0, kick: 0 };
-let W = [];
-const enemies = [], hitMeshes = [], pickups = [], grenades = [];
+const enemies = [], hitMeshes = [], pickups = [];
 const keys = new Set();
-let firing = false, fireLatch = false, fireQueued = false, edgeTurn = 0; // edgeTurn: without pointer lock, holding the cursor near a side edge keeps turning
+const input = { firing: false, fireLatch: false, fireQueued: false, edgeTurn: 0 };
 
-// ============================================================ View model (attached to the camera)
-const gun = new THREE.Group(); camera.add(gun);
-const gunMat = lam(0x2e3238), gunMat2 = lam(0x474c40);
-const rifleModel = new THREE.Group(), pistolModel = new THREE.Group(), sniperModel = new THREE.Group(), magnumModel = new THREE.Group();
-box(rifleModel, gunMat, 0.055, 0.075, 0.52, 0, 0, -0.1); box(rifleModel, gunMat, 0.028, 0.028, 0.3, 0, 0.008, -0.5);
-box(rifleModel, gunMat2, 0.05, 0.16, 0.07, 0, -0.1, -0.02); box(rifleModel, gunMat, 0.02, 0.05, 0.14, 0, 0.065, -0.06);
-box(rifleModel, gunMat2, 0.06, 0.06, 0.2, 0, -0.005, -0.3);
-box(pistolModel, gunMat, 0.04, 0.055, 0.22, 0, 0, -0.1); box(pistolModel, gunMat2, 0.038, 0.13, 0.055, 0, -0.08, -0.02);
-rifleModel.position.z = -0.22; pistolModel.position.z = -0.14; // pushed forward so the stock does not fill the screen
-box(sniperModel, gunMat2, 0.05, 0.07, 0.7, 0, 0, -0.15); box(sniperModel, gunMat, 0.024, 0.024, 0.5, 0, 0.01, -0.72);
-box(sniperModel, gunMat, 0.046, 0.046, 0.26, 0, 0.078, -0.12); box(sniperModel, gunMat2, 0.045, 0.14, 0.06, 0, -0.09, 0.02);
-sniperModel.position.z = -0.22;
-box(magnumModel, gunMat, 0.04, 0.06, 0.25, 0, 0.005, -0.12); box(magnumModel, gunMat2, 0.038, 0.13, 0.055, 0, -0.085, 0.0); magnumModel.position.z = -0.14;
-// The box models above are placeholders: they show until the GLB loads, and stay if a file is missing.
-const gunModels = { m16: rifleModel, m9: pistolModel, m24: sniperModel, deagle: magnumModel };
-const MUZZLE_Z = { m16: -0.9, m9: -0.37, m24: -1.2, deagle: -0.42 }, GUN_SFX = { m16: 'rifle', m9: 'pistol', m24: 'sniper', deagle: 'magnum' };
-const ADS_Y = { m16: -0.105 }; // gun height while aiming, so the sights meet the crosshair; filled in from each GLB
-gun.add(rifleModel, pistolModel, sniperModel, magnumModel);
+// ============================================================ Subsystems
+let enemiesSys;
+const weapons = createWeapons({
+  scene, camera, colliders, S, P, enemies, hitMeshes, fx, hud,
+  onDamageEnemy: (e, dmg, head) => enemiesSys.damageEnemy(e, dmg, head),
+  onDamagePlayer: (dmg, sx, sz) => damagePlayer(dmg, sx, sz),
+  onM16Loaded: () => { for (const e of enemies) if (e.body && !e.handGun) enemiesSys.attachHandGun(e); },
+});
+enemiesSys = createEnemies({
+  scene, colliders, grid, flow, MAP, S, P, enemies, hitMeshes, fx, hud,
+  protoGuns: weapons.protoGuns,
+  onSoldierLoaded: (proto) => weapons.buildFpArms(proto),
+  onDamagePlayer: (dmg, sx, sz) => damagePlayer(dmg, sx, sz),
+  onExplode: (pos, r, dmg, byPlayer) => weapons.explode(pos, r, dmg, byPlayer),
+  onDropPickup: (type, x, z) => addPickup(type, x, z),
+});
 
-// GLB view models (assets/models). Every file is 1 unit long along its X axis.
-//   len    real length in metres          muzzle  which way the barrel points along X (+1 or -1)
-//   axis   height of the barrel axis as a fraction of the model's height (it is placed on the gun group's y = 0)
-//   rear   z of the back end of the gun in the gun group (positive is toward the camera)
-//   hip    optional gun position when not aiming (default 0.2, -0.19, -0.42); pistols sit higher and closer
-//   adsZ   optional distance from the eye when aiming (default -0.3); pistols are held farther out so the hands do not fill the view
-const VIEW = {
-  m16:    { file: 'M16',         len: 1.00, muzzle:  1, axis: 0.70, rear: 0.40 },
-  m9:     { file: 'Beretta92',   len: 0.22, muzzle:  1, axis: 0.86, rear: 0.02, hip: [0.16, -0.115, -0.36], adsZ: -0.5 },
-  m24:    { file: 'M24',         len: 1.10, muzzle: -1, axis: 0.42, rear: 0.42 },
-  deagle: { file: 'DesertEagle', len: 0.27, muzzle: -1, axis: 0.84, rear: 0.03, hip: [0.16, -0.115, -0.36], adsZ: -0.5 },
-};
-const HIP_DEFAULT = [0.2, -0.19, -0.42];
-const assetUrl = (p) => './' + p + (window.ASSET_V && window.ASSET_V[p] ? '?v=' + window.ASSET_V[p] : '');
-const protoGuns = {};
-const gunSteel = new THREE.MeshStandardMaterial({ color: 0x4b5058, roughness: 0.5, metalness: 0 });
-// Untextured models are coloured by region with vertex colours. Each painter gets u (-0.5 at the rear to +0.5 at the muzzle)
-// and y (height above the lowest point, in model units) and returns a colour.
-const PAINT = {
-  m9:     (u, y) => (u < -0.1 && y < 0.36 ? 0x4a3322 : u > 0.4 ? 0x5c6066 : 0x2e3136),                  // walnut grips, black frame and slide
-  deagle: (u, y) => (u < -0.1 && y < 0.33 ? 0x1b1b1d : 0x9da0a4),                                      // black grip, brushed steel body
-  m24:    (u, y) => (y > 0.148 ? 0x1c1d20 : u > 0.36 ? 0x202124 : (y < 0.105 || u < -0.18) ? 0x55603c : 0x2c2e32), // black scope and suppressor, olive stock
-};
-const paintMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0 });
-function paintGeometry(geo, fn, muzzle) {
-  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3), c = new THREE.Color();
-  geo.computeBoundingBox(); const y0 = geo.boundingBox.min.y;
-  for (let i = 0; i < pos.count; i++) { c.setHex(fn(pos.getX(i) * muzzle, pos.getY(i) - y0)); col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-}
-async function loadViewModels() {
-  const loader = new GLTFLoader(), box3 = new THREE.Box3(), c = new THREE.Vector3();
-  await Promise.all(Object.entries(VIEW).map(async ([id, v]) => {
-    try {
-      const model = (await loader.loadAsync(assetUrl(`assets/models/${v.file}.glb`))).scene;
-      model.traverse((o) => {
-        if (!o.isMesh) return;
-        o.frustumCulled = false;
-        if (o.material && o.material.map) { o.material.metalness = 0; o.material.metalnessMap = null; o.material.roughness = Math.max(0.55, o.material.roughness); } // no environment map, so metal would render black
-        else if (PAINT[id]) { paintGeometry(o.geometry, PAINT[id], v.muzzle); o.material = paintMat; }
-        else o.material = gunSteel; // untextured models without a painter get a plain steel finish
-      });
-      protoGuns[id] = model.clone(); // untouched copy for third-person use (enemy hands)
-      const inner = new THREE.Group(); inner.add(model); inner.rotation.y = v.muzzle * Math.PI / 2; inner.scale.setScalar(v.len);
-      inner.updateMatrixWorld(true); box3.setFromObject(inner); box3.getCenter(c);
-      const h = box3.max.y - box3.min.y;
-      inner.position.set(-c.x, -(box3.min.y + h * v.axis), v.rear - box3.max.z);
-      const holder = gunModels[id]; holder.clear(); holder.position.set(0, 0, 0); holder.add(inner);
-      MUZZLE_Z[id] = box3.min.z + inner.position.z;
-      ADS_Y[id] = -(box3.max.y + inner.position.y) - 0.004;
-    } catch (err) { console.warn('view model not loaded, keeping the placeholder:', v.file, err && err.message); }
-  }));
-}
-loadViewModels();
-
-// First-person arms: box sleeves and gloves, one rig per weapon, attached to the gun so they follow recoil, reload, and aiming.
-// Each entry gives a palm point and an elbow point in gun-group space. The box arms (fallback) put a glove at the palm and run a sleeve toward the elbow.
-const ARMS = {
-  // Per hand, in gun-group space (x right, y up, -z toward the muzzle):
-  //   at       where the palm presses on the weapon        fingers  direction from the wrist to the knuckles
-  //   palm     the way the palm faces                        elbow    a point the forearm comes from (elbowAim: the same while aiming)
-  //   shape    a hand shape from FP.grips (model arms only; the box arms use only `at` and `elbow`)
-  m16: {
-    r: { at: [0.016, -0.09, 0.085],   fingers: [0, -0.35, -1],   palm: [-1, 0, 0], elbow: [0.14, -0.3, 0.5],   shape: 'grip' },
-    l: { at: [-0.016, -0.085, -0.235], fingers: [0, -0.3, -1],    palm: [1, 0, 0],  elbow: [-0.36, -0.3, 0.3],  shape: 'foregrip' },
-  },
-  m24: {
-    r: { at: [0.016, -0.08, 0.07],    fingers: [0, -0.35, -1],   palm: [-1, 0, 0], elbow: [0.14, -0.3, 0.5],   shape: 'grip' },
-    l: { at: [0, -0.05, -0.2],        fingers: [0.55, 0, -0.83], palm: [0, 1, 0],  elbow: [-0.4, -0.3, 0.35],  shape: 'hold' },
-  },
-  m9: {
-    r: { at: [0.014, -0.075, -0.005], fingers: [0, -0.25, -1],   palm: [-1, 0, 0], elbow: [0.1, -0.2, 0.45], elbowAim: [0.2, -0.42, 0.3],   shape: 'grip' },
-    l: { at: [-0.02, -0.09, -0.02],   fingers: [0.12, -0.45, -1], palm: [1, 0, 0.2], elbow: [-0.28, -0.26, 0.4], elbowAim: [-0.24, -0.44, 0.28], shape: 'support' },
-  },
-  deagle: {
-    r: { at: [0.016, -0.08, -0.005],  fingers: [0, -0.25, -1],   palm: [-1, 0, 0], elbow: [0.1, -0.2, 0.45], elbowAim: [0.2, -0.42, 0.3],   shape: 'grip' },
-    l: { at: [-0.022, -0.095, -0.02], fingers: [0.12, -0.45, -1], palm: [1, 0, 0.2], elbow: [-0.28, -0.26, 0.4], elbowAim: [-0.24, -0.44, 0.28], shape: 'support' },
-  },
-};
-// A little emissive keeps the arms readable when the camera faces away from the sun
-const sleeveMat = new THREE.MeshLambertMaterial({ color: 0x5c6f47, emissive: 0x1c2415 }), gloveMat = new THREE.MeshLambertMaterial({ color: 0x3b3f37, emissive: 0x121310 }), armRigs = {};
-function buildArm(parent, hand, elbow) {
-  const g = new THREE.Group(), e = new THREE.Vector3(...elbow);
-  g.position.set(...hand); g.lookAt(e); // built before it has a parent, so local and world space agree
-  const L = g.position.distanceTo(e);
-  box(g, gloveMat, 0.07, 0.078, 0.11, 0, 0, 0.03);
-  box(g, sleeveMat, 0.084, 0.084, L - 0.085, 0, 0, 0.085 + (L - 0.085) / 2);
-  box(g, gloveMat, 0.09, 0.09, 0.025, 0, 0, 0.092); // cuff
-  parent.add(g);
-}
-for (const id in ARMS) { const rig = armRigs[id] = new THREE.Group(); buildArm(rig, ARMS[id].r.at, ARMS[id].r.elbow); buildArm(rig, ARMS[id].l.at, ARMS[id].l.elbow); rig.visible = false; gun.add(rig); }
-const muzzle = new THREE.Object3D(); gun.add(muzzle);
-const muzzleFlash = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc36a, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
-muzzleFlash.scale.setScalar(0.32); muzzleFlash.visible = false; muzzle.add(muzzleFlash);
-const muzzleLight = new THREE.PointLight(0xffb060, 0, 22); camera.add(muzzleLight);
-let flashT = 0;
-
-// ============================================================ HUD
-const hud = { hpbar: $('hpbar'), hpfill: $('hpbar').firstElementChild, hpnum: $('hpnum'), ammo: $('ammo'), wname: $('wname'), gren: $('gren'), money: $('money'), scope: $('scope'), wave: $('wave'), left: $('left'), banner: $('banner'), radio: $('radio'), rtext: $('radiotext'), hit: $('hit'), vign: $('vign'), dmg: $('dmgdir'), cross: $('cross'), feed: $('feed'), tip: $('tip') };
-const mapCtx = $('map').getContext('2d');
-let bannerT = 0, radioT = 0, hitT = 0, vignT = 0, dmgT = 0, dmgAng = 0, tipT = 0;
-function banner(big, small, dur = 3.2) { hud.banner.firstElementChild.textContent = big; hud.banner.lastElementChild.textContent = small; hud.banner.style.opacity = 1; bannerT = dur; }
-function radio(text, dur = 7) { hud.rtext.textContent = text; hud.radio.style.opacity = 1; radioT = dur; sfx.radio(); }
-function tip(text) { hud.tip.textContent = text; hud.tip.style.opacity = 1; tipT = 1.6; }
-function feed(text, hs) { const d = document.createElement('div'); d.textContent = text; if (hs) d.className = 'hs'; hud.feed.prepend(d); setTimeout(() => d.remove(), 2700); while (hud.feed.children.length > 5) hud.feed.lastChild.remove(); }
-function hitMarker(head) { hud.hit.className = head ? 'head' : ''; hitT = 0.16; head ? sfx.head() : sfx.hit(); }
-
-function updateHud(dt) {
-  const w = W[P.wi], hp = Math.max(0, Math.ceil(P.hp));
-  hud.hpfill.style.width = hp + '%'; hud.hpnum.textContent = hp; hud.hpbar.classList.toggle('low', hp <= 30);
-  hud.wname.textContent = w.reloadT > 0 ? w.def.name + ' — RELOADING' : w.def.name;
-  hud.ammo.innerHTML = `<b>${w.mag}</b> / ${w.reserve === Infinity ? '∞' : w.reserve}`;
-  hud.ammo.classList.toggle('low', w.mag <= w.def.mag * 0.2);
-  hud.gren.textContent = 'GRENADES × ' + P.grenades;
-  hud.money.textContent = '$' + S.money.toLocaleString('en-US');
-  hud.wave.textContent = S.wave < 0 ? 'STAND BY' : `WAVE ${S.wave + 1} / ${WAVES.length}`;
-  hud.left.textContent = S.interT > 0 ? `NEXT WAVE IN ${Math.ceil(S.interT)}s` : `HOSTILES ${S.alive + S.queue.length}`;
-  hud.cross.style.setProperty('--gap', (P.ads ? 0 : 4 + P.bloom * 9 + Math.hypot(P.vel.x, P.vel.z) * 0.9) + 'px');
-  hud.cross.style.opacity = W[P.wi].reloadT > 0 ? 0.35 : 1;
-  if (bannerT > 0 && (bannerT -= dt) <= 0) hud.banner.style.opacity = 0;
-  if (radioT > 0 && (radioT -= dt) <= 0) hud.radio.style.opacity = 0;
-  if (tipT > 0 && (tipT -= dt) <= 0) hud.tip.style.opacity = 0;
-  hitT = Math.max(0, hitT - dt); hud.hit.style.opacity = hitT > 0 ? 1 : 0;
-  vignT = Math.max(0, vignT - dt); hud.vign.style.opacity = Math.max(vignT, hp <= 30 ? 0.35 : 0);
-  dmgT = Math.max(0, dmgT - dt); hud.dmg.style.opacity = Math.min(1, dmgT * 2); hud.dmg.style.transform = `rotate(${dmgAng}rad)`;
-  drawMap();
-}
-function drawMap() {
-  const c = mapCtx, Wd = 340, h = Wd / 2, s = h / 75, cy = Math.cos(P.yaw), sy = Math.sin(P.yaw);
-  c.clearRect(0, 0, Wd, Wd); c.save(); c.beginPath(); c.arc(h, h, h - 2, 0, 7); c.clip();
-  c.fillStyle = 'rgba(10,14,18,.7)'; c.fillRect(0, 0, Wd, Wd);
-  c.translate(h, h); c.rotate(P.yaw); c.scale(s, s); c.translate(-P.pos.x, -P.pos.z);
-  c.fillStyle = 'rgba(160,170,180,.5)';
-  for (const b of MAP.buildings) { if (Math.abs(b.x - P.pos.x) > 150 || Math.abs(b.z - P.pos.z) > 150) continue; c.fillRect(b.x - b.w / 2, b.z - b.d / 2, b.w, b.d); }
-  c.restore();
-  const dot = (wx, wz, color, r) => {
-    const dx = wx - P.pos.x, dz = wz - P.pos.z; let x = (dx * cy - dz * sy) * s, y = (dx * sy + dz * cy) * s;
-    const l = Math.hypot(x, y), m = h - 9; if (l > m) { x *= m / l; y *= m / l; }
-    c.fillStyle = color; c.beginPath(); c.arc(h + x, h + y, r, 0, 7); c.fill();
-  };
-  for (const p of pickups) dot(p.mesh.position.x, p.mesh.position.z, p.type === 'supply' ? '#ffb347' : p.type === 'med' ? '#fff' : '#9fd36a', p.type === 'supply' ? 7 : 4);
-  for (const e of enemies) if (e.alive) dot(e.group.position.x, e.group.position.z, e.drone ? '#ff9a3c' : '#ff4a3a', e.drone ? 4 : 5);
-  c.fillStyle = '#e9e4d8'; c.beginPath(); c.moveTo(h, h - 11); c.lineTo(h + 7, h + 8); c.lineTo(h, h + 4); c.lineTo(h - 7, h + 8); c.fill();
-}
+const assetsReady = Promise.allSettled([weapons.loadViewModels(), enemiesSys.loadSoldier()]).then(() => {
+  const btn = $('btnStart');
+  btn.disabled = false;
+  btn.textContent = 'DEPLOY';
+});
 
 // ============================================================ Player
-const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _dir = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3();
 function updatePlayer(dt) {
   let f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0), s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
   const len = Math.hypot(f, s) || 1; f /= len; s /= len;
-  if (edgeTurn && !document.pointerLockElement) P.yaw -= edgeTurn * 2.4 * dt;
+  if (input.edgeTurn && !document.pointerLockElement) P.yaw -= input.edgeTurn * 2.4 * dt;
   P.crouch = keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC');
   const sprint = keys.has('ShiftLeft') && f > 0 && !P.crouch && !P.ads;
   let sp = P.crouch ? PL.crouch : sprint ? PL.sprint : PL.walk; if (P.ads) sp *= PL.adsMul;
@@ -479,519 +76,103 @@ function updatePlayer(dt) {
   if (S.time - P.lastHurt > PL.regenDelay && P.hp < PL.regenCap) P.hp = Math.min(PL.regenCap, P.hp + PL.regenRate * dt);
   camera.position.set(P.pos.x, P.pos.y + P.eye + Math.sin(P.bob * 2) * 0.035 * Math.min(1, hs / 5), P.pos.z);
   camera.rotation.set(P.pitch, P.yaw, 0);
-  const cw = W[P.wi], fov = P.ads && cw.reloadT <= 0 ? (cw.def.zoomFov || 48) : sprint ? 80 : 75;
+  const cw = weapons.getW()[P.wi], fov = P.ads && cw.reloadT <= 0 ? (cw.def.zoomFov || 48) : sprint ? 80 : 75;
   if (Math.abs(camera.fov - fov) > 0.1) { camera.fov += (fov - camera.fov) * Math.min(1, 14 * dt); camera.updateProjectionMatrix(); }
   camera.updateMatrixWorld();
 }
+
 function damagePlayer(dmg, sx, sz) {
   if (S.mode !== 'playing') return;
-  P.hp -= dmg; P.lastHurt = S.time; vignT = Math.min(0.8, 0.3 + dmg / 40); sfx.hurt();
+  P.hp -= dmg; P.lastHurt = S.time; sfx.hurt();
+  let ang;
   if (sx !== undefined) {
     const vx = sx - P.pos.x, vz = sz - P.pos.z, sy = Math.sin(P.yaw), cy = Math.cos(P.yaw);
-    dmgAng = Math.atan2(vx * cy - vz * sy, -vx * sy - vz * cy); dmgT = 1;
+    ang = Math.atan2(vx * cy - vz * sy, -vx * sy - vz * cy);
   }
+  hud.setHurt(Math.min(0.8, 0.3 + dmg / 40), ang);
   if (P.hp <= 0) endGame(false);
 }
 
-// ============================================================ Weapons
-function resetWeapons() { W = WEAPONS.map((def) => ({ def, mag: def.mag, reserve: def.reserve, cool: 0, reloadT: 0, owned: !def.price })); P.wi = 0; }
-function switchWeapon(i) { if (i === P.wi || !W[i] || !W[i].owned) return; W[P.wi].reloadT = 0; P.wi = i; W[i].cool = 0.25; P.kick = 0.5; }
-function startReload() {
-  const w = W[P.wi];
-  if (w.reloadT > 0 || w.mag >= w.def.mag || w.reserve <= 0) return;
-  w.reloadT = w.def.reload; sfx.reload();
-}
-function fire() {
-  const w = W[P.wi], def = w.def;
-  if (w.cool > 0 || w.reloadT > 0) return false;
-  if (w.mag <= 0) { sfx.empty(); w.cool = 0.2; if (w.reserve > 0) startReload(); else tip('OUT OF AMMO — PRESS 2 FOR PISTOL'); return true; }
-  w.mag--; w.cool = def.interval; S.shots++;
-  camera.getWorldDirection(_dir);
-  _right.setFromMatrixColumn(camera.matrixWorld, 0); _up.setFromMatrixColumn(camera.matrixWorld, 1);
-  const moving = Math.hypot(P.vel.x, P.vel.z) > 1.5;
-  const sp = def.spread * (P.ads ? (def.adsSpread ?? 0.3) : 1) * (moving ? 1.7 : 1) * (P.crouch ? 0.7 : 1) * (1 + P.bloom * 2.2) * (P.onGround ? 1 : 2.5);
-  const a = rand() * Math.PI * 2, r = Math.sqrt(rand()) * sp;
-  _dir.addScaledVector(_right, Math.cos(a) * r).addScaledVector(_up, Math.sin(a) * r).normalize();
-  const o = camera.position;
-  let dist = raycastWorld(o.x, o.y, o.z, _dir.x * def.range, _dir.y * def.range, _dir.z * def.range, colliders) * def.range;
-  if (_dir.y < -0.001) dist = Math.min(dist, -o.y / _dir.y); // ground
-  ray.set(o, _dir); ray.far = dist;
-  const hit = ray.intersectObjects(hitMeshes, false)[0];
-  if (hit) {
-    dist = hit.distance; const e = hit.object.userData.enemy, head = hit.object.userData.head;
-    S.hits++; hitMarker(head);
-    damageEnemy(e, def.dmg * (head ? def.head : 1), head);
-    flash(hit.point, 0xff5a3a, 0.25, 0.6, 0.12);
-  } else if (dist < def.range) { _v.copy(o).addScaledVector(_dir, dist - 0.05); flash(_v, 0xffd9a0, 0.2, 0.55, 0.1); }
-  muzzle.getWorldPosition(_v2); _v.copy(o).addScaledVector(_dir, dist); tracer(_v2, _v, false);
-  P.pitch = Math.min(1.5, P.pitch + def.recoil * (0.7 + rand() * 0.6) * (P.ads ? 0.7 : 1)); P.yaw += (rand() - 0.5) * def.recoil * 0.7;
-  P.bloom = Math.min(1, P.bloom + 0.22); P.kick = 1; flashT = 0.045;
-  sfx[GUN_SFX[def.id] || 'pistol']();
-  return true;
-}
-const ray = new THREE.Raycaster();
-function updateWeapons(dt) {
-  const w = W[P.wi];
-  w.cool -= dt; P.bloom = Math.max(0, P.bloom - dt * 2.4); P.kick = Math.max(0, P.kick - dt * 9);
-  if (w.reloadT > 0 && (w.reloadT -= dt) <= 0) { const n = Math.min(w.def.mag - w.mag, w.reserve); w.mag += n; w.reserve -= n; w.reloadT = 0; }
-  // fireQueued: guarantees one shot when press and release land in the same frame
-  if (w.reloadT > 0) fireQueued = false;
-  else if ((firing || fireQueued) && (w.def.auto || !fireLatch || fireQueued) && fire()) { fireLatch = true; fireQueued = false; }
-  // View model pose
-  const hip = (VIEW[w.def.id] && VIEW[w.def.id].hip) || HIP_DEFAULT;
-  const scoped = !!w.def.scope && P.ads && w.reloadT <= 0 && camera.fov < 30;
-  for (const id in gunModels) { const on = id === w.def.id && !scoped; gunModels[id].visible = on; if (armRigs[id]) armRigs[id].visible = on && !fpArms; }
-  if (fpArms) { fpArms.rig.visible = !scoped; poseFpArms(w.def.id, Math.min(1, Math.max(0, 1 - gun.position.x / hip[0]))); } // model arms replace the box arms once the soldier has loaded
-  hud.scope.style.display = scoped ? 'block' : 'none'; hud.cross.style.visibility = scoped ? 'hidden' : 'visible';
-  const hs = Math.hypot(P.vel.x, P.vel.z), ads = P.ads && w.reloadT <= 0;
-  const tx = ads ? 0 : hip[0], ty = ads ? (ADS_Y[w.def.id] ?? -0.06) : hip[1], tz = ads ? ((VIEW[w.def.id] && VIEW[w.def.id].adsZ) || -0.3) : hip[2], k = Math.min(1, 16 * dt);
-  gun.position.x += (tx - gun.position.x) * k; gun.position.y += (ty - gun.position.y) * k; gun.position.z += (tz - gun.position.z) * k;
-  const bobK = ads ? 0.15 : 1, rl = w.reloadT > 0 ? Math.sin(Math.min(1, (w.def.reload - w.reloadT) / w.def.reload) * Math.PI) : 0;
-  gun.position.x += Math.cos(P.bob) * 0.0012 * hs * bobK; gun.position.y += Math.abs(Math.sin(P.bob)) * 0.0012 * hs * bobK;
-  gun.rotation.set(P.kick * 0.05 - rl * 0.7, rl * 0.35, rl * 0.25);
-  gun.translateZ(P.kick * 0.035);
-  muzzle.position.set(0, 0.008, MUZZLE_Z[w.def.id] ?? -0.4);
-  flashT -= dt; muzzleFlash.visible = flashT > 0; muzzleLight.intensity = flashT > 0 ? 40 : 0;
-  if (muzzleFlash.visible) muzzleFlash.material.rotation = rand() * 6;
-}
-
-// Grenades
-const grenGeo = new THREE.SphereGeometry(0.09, 8, 6);
-function throwGrenade() {
-  if (P.grenades <= 0) { tip('NO GRENADES'); return; }
-  P.grenades--;
-  camera.getWorldDirection(_dir);
-  const m = new THREE.Mesh(grenGeo, lam(0x39422e)); const o = camera.position, clear = raycastWorld(o.x, o.y, o.z, _dir.x * 0.7, _dir.y * 0.7, _dir.z * 0.7, colliders) >= 1;
-  m.position.copy(o); if (clear) m.position.addScaledVector(_dir, 0.5); scene.add(m);
-  grenades.push({ m, v: _dir.clone().multiplyScalar(GRENADE.throwSpeed).add(_v.set(P.vel.x, 4.5, P.vel.z)), t: GRENADE.fuse });
-}
-function updateGrenades(dt) {
-  for (let i = grenades.length - 1; i >= 0; i--) {
-    const g = grenades[i], p = g.m.position;
-    g.v.y -= 20 * dt;
-    const dx = g.v.x * dt, dy = g.v.y * dt, dz = g.v.z * dt;
-    if (raycastWorld(p.x, p.y, p.z, dx, dy, dz, colliders) < 1) { g.v.x *= -0.35; g.v.z *= -0.35; g.v.y *= 0.5; }
-    else { p.x += dx; p.y += dy; p.z += dz; }
-    if (p.y < 0.1) { p.y = 0.1; g.v.y *= -0.35; g.v.x *= 0.6; g.v.z *= 0.6; }
-    if ((g.t -= dt) <= 0) { explode(p, GRENADE.radius, GRENADE.dmg, true); scene.remove(g.m); grenades.splice(i, 1); }
-  }
-}
-// A blast only hurts targets with a clear line from the blast point (raised slightly off the ground)
-function blastClear(pos, x, y, z) { const oy = pos.y + 0.4; return raycastWorld(pos.x, oy, pos.z, x - pos.x, y - oy, z - pos.z, colliders) >= 1; }
-function explode(pos, radius, dmg, byPlayer) {
-  const d0 = pos.distanceTo(camera.position);
-  sfx.boom(d0);
-  flash(pos, 0xffb040, 1.5, radius * 1.6 + 3, 0.4); flash(_v.copy(pos).setY(pos.y + 0.6), 0xff5a20, 1, radius + 2, 0.55);
-  for (let i = 0; i < 5; i++) flash(_v.set(pos.x + (rand() - 0.5) * 3, pos.y + rand() * 2, pos.z + (rand() - 0.5) * 3), 0x664433, 1.2, 4 + rand() * 3, 0.7 + rand() * 0.5);
-  if (radius <= 0) return;
-  if (byPlayer) for (const e of enemies) {
-    if (!e.alive) continue;
-    const d = Math.hypot(e.group.position.x - pos.x, e.group.position.z - pos.z, e.group.position.y + (e.drone ? 0 : 1) - pos.y);
-    if (d < radius && blastClear(pos, e.group.position.x, e.group.position.y + (e.drone ? 0 : 1.1), e.group.position.z)) damageEnemy(e, dmg * (1 - d / radius) + 15, false);
-  }
-  if (d0 < radius && blastClear(pos, camera.position.x, camera.position.y - 0.3, camera.position.z)) damagePlayer(dmg * (byPlayer ? GRENADE.selfMul : 1) * (1 - d0 / radius), pos.x, pos.z);
-}
-
-// ============================================================ Enemies
-const _ft = { x: 0, z: 0 };
-// ---- Rigged soldier (assets/models/soldier.glb): Mixamo skeleton, four clips. The box figure remains as the fallback
-// and its invisible parts are still the hit boxes.
-//   clips   index of each clip in the file     height  standing height in metres at scale 1
-//   tint    multiplies the texture per enemy type
-//   gun     how the rifle sits in the right hand bone: position (bone units) and one rotation per clip (radians, XYZ),
-//           because the wrist is turned differently when running and when aiming. The values were solved in the
-//           browser so the barrel points forward (aim) or forward and down (run).
-const SOLDIER = {
-  file: 'soldier', height: 1.78, clips: { die: 0, run: 1, walk: 2, aim: 3 },
-  tint: { rifle: 0xffffff, assault: 0xb4ccff, heavy: 0xd8cfa6 },
-  gun: { len: 0.95, grip: [0.19, -0.1, 0], pos: [0, 0.06, 0], rot: { run: [0.244, -0.728, 0.931], aim: [0.633, -0.743, 1.425] } },
+// ============================================================ Pickups (shared materials)
+const pickupRedMat = new THREE.MeshBasicMaterial({ color: 0xd8281e });
+const pickupGlowMats = {
+  ammo:   new THREE.SpriteMaterial({ map: glowTex, color: 0x9fd36a, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.55 }),
+  med:    new THREE.SpriteMaterial({ map: glowTex, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.55 }),
+  supply: new THREE.SpriteMaterial({ map: glowTex, color: 0xffb347, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.55 }),
 };
-let soldierProto = null;
-const soldierMats = {};
-async function loadSoldier() {
-  try {
-    const gltf = await new GLTFLoader().loadAsync(assetUrl(`assets/models/${SOLDIER.file}.glb`));
-    let mesh = null; gltf.scene.traverse((o) => { if (o.isSkinnedMesh && !mesh) mesh = o; });
-    mesh.geometry.computeBoundingBox();
-    const scale = SOLDIER.height / (mesh.geometry.boundingBox.max.y - mesh.geometry.boundingBox.min.y);
-    const clips = {}, speed = {};
-    for (const [name, i] of Object.entries(SOLDIER.clips)) {
-      const clip = gltf.animations[i]; if (!clip) throw new Error('missing clip ' + name);
-      clip.tracks = clip.tracks.filter((t) => !/\.scale$/.test(t.name));
-      for (const t of clip.tracks) if (/Hips\.position$/.test(t.name)) {
-        // The clips walk the character forward; enemy positions are driven by code, so keep only the vertical motion.
-        const v = t.values, n = v.length;
-        speed[name] = Math.hypot(v[n - 3] - v[0], v[n - 1] - v[2]) / clip.duration * scale;
-        for (let k = 0; k < n; k += 3) { v[k] = v[0]; v[k + 2] = v[2]; }
-      }
-      clips[name] = clip;
-    }
-    soldierProto = { scene: gltf.scene, clips, speed, scale, material: mesh.material };
-    try { buildFpArms(); } catch (err) { console.warn('first-person arms not built, keeping the box arms:', err && err.message); }
-  } catch (err) { console.warn('soldier model not loaded, keeping the box figures:', err && err.message); }
-}
-loadSoldier();
-// ---- First-person arms cut out of the soldier model. The triangles skinned to the arm, forearm, hand, and finger bones
-// are kept. Each hand is then placed directly: ARMS says where the palm touches the weapon, which way the palm faces, and
-// which way the fingers point; the hand bone is oriented to match, the forearm runs from an elbow point to the wrist with
-// its twist matched to the hand, and the upper arm follows from a shoulder point. Nothing about the skeleton's local axes
-// is assumed: the palm normal, finger direction, and every finger's bend axis are measured from the bind pose (a T-pose
-// with the palms facing down).
-let fpArms = null;
-const FP = {
-  wristBack: 0.085, // metres from the palm contact point back to the wrist
-  palmDepth: 0.022, // metres from the palm surface to the middle of the hand
-  // Hand shapes: the bend of each finger's three joints in radians, knuckle to fingertip. `rest` covers fingers without
-  // their own entry. `thumb` is [swing toward the palm, bend of the two outer joints].
-  grips: {
-    grip:     { rest: [1.25, 1.2, 0.6], Index: [0.25, 0.35, 0.2], thumb: [0.9, 0.35] },  // around a pistol grip, index finger along the frame
-    support:  { rest: [1.2, 1.15, 0.6], thumb: [0.8, 0.3] },                               // wrapped over the firing hand
-    foregrip: { rest: [1.25, 1.2, 0.6], thumb: [0.9, 0.35] },                              // around a vertical foregrip
-    hold:     { rest: [0.9, 1.05, 0.55], thumb: [0.4, 0.25] },                              // cupped under a handguard
-  },
-  shoulder: { r: [0.05, -0.1, 0.6], l: [-0.42, -0.1, 0.6] }, // roughly where the shoulders are, in gun-group space
-};
-const _fa = new THREE.Vector3(), _fb = new THREE.Vector3(), _fc = new THREE.Vector3(), _fd = new THREE.Vector3(), _fq = new THREE.Quaternion();
-const _fm = new THREE.Matrix4(), _fx = new THREE.Vector3(), _fn = new THREE.Vector3(), _fq2 = new THREE.Quaternion(), _fw = new THREE.Vector3();
-// Rotation whose Y axis is `y` and whose Z axis is `z` made perpendicular to it (both in the same space).
-function basisQuat(y, z, out) {
-  _fn.copy(z).addScaledVector(y, -z.dot(y));
-  if (_fn.lengthSq() < 1e-6) _fn.set(1, 0, 0).addScaledVector(y, -y.x); // z was parallel to y: pick any perpendicular
-  _fn.normalize(); _fx.crossVectors(y, _fn);
-  return out.setFromRotationMatrix(_fm.makeBasis(_fx, y, _fn));
-}
-function buildFpArms() {
-  const src = skeletonClone(soldierProto.scene); let mesh = null; src.traverse((o) => { if (o.isSkinnedMesh) mesh = o; });
-  const keep = mesh.skeleton.bones.map((b) => /(Left|Right)(Arm|ForeArm|Hand)/.test(b.name));
-  const geo = mesh.geometry.clone(), si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, inside = new Uint8Array(si.count);
-  if (!geo.index) throw new Error('soldier mesh is not indexed');
-  for (let i = 0; i < si.count; i++) {
-    const b = [si.getX(i), si.getY(i), si.getZ(i), si.getW(i)], w = [sw.getX(i), sw.getY(i), sw.getZ(i), sw.getW(i)];
-    let k = 0; for (let j = 0; j < 4; j++) if (keep[b[j]]) k += w[j];
-    if (k <= 0.5) continue;
-    inside[i] = 1; // drop the influence of bones we do not animate, so the cut edge does not stretch toward the torso
-    sw.setXYZW(i, ...w.map((v, j) => (keep[b[j]] ? v / k : 0)));
-  }
-  const idx = geo.index.array, out = [];
-  for (let t = 0; t < idx.length; t += 3) if (inside[idx[t]] && inside[idx[t + 1]] && inside[idx[t + 2]]) out.push(idx[t], idx[t + 1], idx[t + 2]);
-  geo.setIndex(out);
-  const mat = soldierProto.material.clone(); mat.metalness = 0; mat.metalnessMap = null; mat.roughness = 0.85; mat.emissive.setHex(0x3a3a3a); mat.emissiveMap = mat.map;
-  mesh.geometry = geo; mesh.material = mat; mesh.frustumCulled = false;
 
-  // Measure the bind pose before anything is moved.
-  src.updateMatrixWorld(true);
-  const down = new THREE.Vector3(0, -1, 0), wp = (o) => o.getWorldPosition(new THREE.Vector3());
-  const toLocal = (bone, v) => v.clone().applyQuaternion(bone.getWorldQuaternion(new THREE.Quaternion()).invert()).normalize();
-  const rig = new THREE.Group(), sides = {};
-  for (const [key, name] of [['r', 'Right'], ['l', 'Left']]) {
-    const get = (n) => src.getObjectByName(`mixamorig${name}${n}`);
-    const arm = get('Arm'), fore = get('ForeArm'), hand = get('Hand');
-    const fingersW = wp(get('HandMiddle1')).sub(wp(hand)).normalize();   // wrist -> knuckles, in world space
-    const side = sides[key] = {
-      arm, fore, hand, vF: fore.position.clone(), vH: hand.position.clone(), fingers: [],
-      handLocal: basisQuat(toLocal(hand, fingersW), toLocal(hand, down), new THREE.Quaternion()).invert(),
-      foreLocal: basisQuat(fore.position.clone().set(0, 0, 0).copy(hand.position).normalize(), toLocal(fore, down), new THREE.Quaternion()).invert(),
-    };
-    hand.traverse((o) => {
-      const m = /Hand(Index|Middle|Ring|Pinky|Thumb)([123])$/.exec(o.name); if (!m) return;
-      const dir = wp(o.children[0] || o).sub(wp(o)).normalize(), f = { b: o, q0: o.quaternion.clone(), finger: m[1], joint: +m[2] - 1 };
-      // Turning about (direction x palm normal) swings the bone toward the palm, whichever hand it is.
-      f.bend = toLocal(o, new THREE.Vector3().crossVectors(dir, down));
-      if (m[1] === 'Thumb' && m[2] === '1') { // the thumb's first joint swings around the hand's long axis to oppose the fingers
-        const sign = Math.sign(new THREE.Vector3().crossVectors(fingersW, dir).dot(down)) || 1;
-        f.swing = toLocal(o, fingersW.clone().multiplyScalar(sign));
-      }
-      side.fingers.push(f);
-    });
-    rig.add(arm); rig.add(fore); // adding the forearm to the rig detaches it from the upper arm; the hand stays its child
-  }
-  rig.add(mesh); rig.visible = false; gun.add(rig);
-  fpArms = { rig, sides, mesh };
-}
-function poseFpArms(id, aim = 0) {
-  const cfg = ARMS[id]; if (!fpArms || !cfg) return;
-  const S = soldierProto.scale;
-  for (const key of ['r', 'l']) {
-    const s = fpArms.sides[key], c = cfg[key], G = FP.grips[c.shape] || FP.grips.grip;
-    _fa.set(...c.fingers).normalize();                                              // wrist -> knuckles
-    _fb.set(...c.palm); _fb.addScaledVector(_fa, -_fb.dot(_fa)).normalize();        // palm normal, perpendicular to the fingers
-    basisQuat(_fa, _fb, _fq2).multiply(s.handLocal);                                // hand orientation in gun-group space
-    _fw.set(...c.at).addScaledVector(_fb, -FP.palmDepth).addScaledVector(_fa, -FP.wristBack); // wrist position
-    _fd.set(...c.elbow); if (c.elbowAim) _fd.lerp(_fx.set(...c.elbowAim), aim);     // the elbows drop while aiming so the forearms clear the view
-    _fc.copy(_fw).sub(_fd).normalize();                                             // forearm direction, elbow -> wrist
-    _fd.copy(_fw).addScaledVector(_fc, -s.vH.length() * S);                         // elbow position
-    basisQuat(_fc, _fb, s.fore.quaternion).multiply(s.foreLocal);                   // forearm twisted to agree with the hand
-    s.fore.position.copy(_fd); s.fore.scale.setScalar(S);
-    s.hand.quaternion.copy(s.fore.quaternion).invert().multiply(_fq2);
-    _fa.copy(_fd).sub(_fx.set(...FP.shoulder[key])).normalize();                    // upper-arm direction, shoulder -> elbow
-    s.arm.quaternion.setFromUnitVectors(_fx.copy(s.vF).normalize(), _fa);
-    s.arm.position.copy(_fd).sub(_fx.copy(s.vF).multiplyScalar(S).applyQuaternion(s.arm.quaternion)); s.arm.scale.setScalar(S);
-    for (const f of s.fingers) {
-      f.b.quaternion.copy(f.q0);
-      if (f.finger === 'Thumb') {
-        if (f.swing) f.b.quaternion.multiply(_fq.setFromAxisAngle(f.swing, G.thumb[0]));
-        else f.b.quaternion.multiply(_fq.setFromAxisAngle(f.bend, G.thumb[1]));
-      } else f.b.quaternion.multiply(_fq.setFromAxisAngle(f.bend, (G[f.finger] || G.rest)[f.joint]));
-    }
-  }
-}
-
-function soldierMat(type) {
-  if (!soldierMats[type]) {
-    const m = soldierMats[type] = soldierProto.material.clone();
-    m.metalness = 0; m.metalnessMap = null; m.roughness = 0.85;
-    m.color.setHex(SOLDIER.tint[type] ?? 0xffffff);
-    m.emissive.setHex(0x505050); m.emissiveMap = m.map; // a little self-light so uniforms stay readable at dusk
-  }
-  return soldierMats[type];
-}
-function placeHandGun(e) {
-  const h = e.handGun, c = SOLDIER.gun; if (!h) return;
-  h.position.set(...c.pos); h.rotation.set(...(c.rot[e.cur] || c.rot.run));
-  h.children[0].position.set(...c.grip);
-  e.group.updateMatrixWorld(true); h.scale.setScalar(1); h.parent.getWorldScale(_hs);
-  h.scale.setScalar(c.len * e.def.scale / _hs.x);
-}
-const _hs = new THREE.Vector3(), _gq = new THREE.Quaternion(), _ge = new THREE.Euler();
-function dressSoldier(e) {
-  const g = e.group;
-  g.traverse((o) => { if (o.isMesh) o.visible = false; }); // hide the box figure; its parts keep working as hit boxes
-  const body = skeletonClone(soldierProto.scene); body.scale.setScalar(soldierProto.scale);
-  const mat = soldierMat(e.type);
-  body.traverse((o) => { if (o.isMesh) { o.material = mat; o.frustumCulled = false; } });
-  g.add(body); e.body = body;
-  const hand = body.getObjectByName('mixamorigRightHand');
-  if (hand && protoGuns.m16) { const holder = new THREE.Group(); holder.add(protoGuns.m16.clone()); hand.add(holder); e.handGun = holder; placeHandGun(e); }
-  e.mixer = new THREE.AnimationMixer(body); e.acts = {};
-  for (const k in soldierProto.clips) e.acts[k] = e.mixer.clipAction(soldierProto.clips[k]);
-  e.acts.die.setLoop(THREE.LoopOnce); e.acts.die.clampWhenFinished = true;
-  e.cur = null; setAnim(e, 'run');
-}
-function setAnim(e, name, fade = 0.25) {
-  if (e.cur === name) return;
-  const next = e.acts[name]; next.reset().play();
-  if (e.cur) e.acts[e.cur].crossFadeTo(next, fade, false);
-  e.cur = name;
-  if (e.handGun && SOLDIER.gun.rot[name]) e.gunQ = _gq.clone().setFromEuler(_ge.set(...SOLDIER.gun.rot[name])); // the grip turns with the clip
-}
-
-const skinMat = lam(0xc49a78), darkMat = lam(0x1f2226), redMat = new THREE.MeshBasicMaterial({ color: 0xd8281e });
-function hitPart(e, parent, mat, sx, sy, sz, x, y, z, head) {
-  const m = box(parent, mat, sx, sy, sz, x, y, z); m.userData.enemy = e; m.userData.head = !!head; e.hit.push(m); return m;
-}
-function spawnEnemy({ type, dir }) {
-  const def = ENEMY_TYPES[type], pts = MAP.spawns[dir];
-  let pt = pts[Math.floor(rand() * pts.length)];
-  for (let i = 0; i < 6 && Math.hypot(pt[0] - P.pos.x, pt[1] - P.pos.z) < 40; i++) pt = pts[Math.floor(rand() * pts.length)];
-  const e = { type, def, drone: type === 'drone', group: new THREE.Group(), hit: [], hp: def.hp, alive: true, deadT: 0, gone: false, los: false, losT: rand() * 0.2, aimT: 0, burst: def.burst || 0, shotT: 0, pauseT: 0, strafe: 0, strafeT: 0, phase: rand() * 6 };
-  const g = e.group; g.rotation.order = 'YXZ';
-  if (e.drone) {
-    box(g, darkMat, 0.42, 0.12, 0.42, 0, 0, 0); box(g, darkMat, 0.9, 0.03, 0.06, 0, 0.04, 0).rotation.y = Math.PI / 4; box(g, darkMat, 0.9, 0.03, 0.06, 0, 0.04, 0).rotation.y = -Math.PI / 4;
-    e.rotors = [[0.32, 0.32], [-0.32, 0.32], [0.32, -0.32], [-0.32, -0.32]].map(([x, z]) => box(g, lam(0x55595f), 0.34, 0.012, 0.04, x, 0.08, z));
-    box(g, redMat, 0.08, 0.05, 0.05, 0, -0.05, 0.2);
-    hitPart(e, g, darkMat, 1.0, 0.5, 1.0, 0, 0, 0, false).visible = false;
-    g.position.set(pt[0], 7, pt[1]);
-  } else {
-    const u = lam(def.color), helm = lam(new THREE.Color(def.color).multiplyScalar(0.7).getHex());
-    hitPart(e, g, u, 0.52, 0.62, 0.3, 0, 1.12, 0); box(g, darkMat, 0.56, 0.38, 0.35, 0, 1.2, 0);
-    hitPart(e, g, skinMat, 0.22, 0.24, 0.24, 0, 1.56, 0, true); hitPart(e, g, helm, 0.28, 0.14, 0.3, 0, 1.68, 0, true);
-    box(g, redMat, 0.07, 0.07, 0.02, 0, 1.68, 0.155);
-    const leg = (x) => { const pv = new THREE.Group(); pv.position.set(x, 0.82, 0); g.add(pv); hitPart(e, pv, u, 0.2, 0.82, 0.24, 0, -0.41, 0); return pv; };
-    e.legL = leg(-0.14); e.legR = leg(0.14);
-    hitPart(e, g, u, 0.15, 0.55, 0.18, -0.34, 1.12, 0.06); hitPart(e, g, u, 0.15, 0.55, 0.18, 0.34, 1.12, 0.06);
-    box(g, darkMat, 0.07, 0.1, type === 'heavy' ? 1.0 : 0.75, 0.2, 1.2, 0.42);
-    if (type === 'heavy') box(g, darkMat, 0.62, 0.5, 0.2, 0, 1.15, -0.22);
-    g.scale.setScalar(def.scale);
-    if (soldierProto) dressSoldier(e);
-    g.position.set(pt[0] + (rand() - 0.5) * 6, 0, pt[1] + (rand() - 0.5) * 6);
-    resolveCircle(g.position, 0.4, 0, 1.7, colliders);
-  }
-  scene.add(g); g.updateMatrixWorld(true);
-  enemies.push(e); hitMeshes.push(...e.hit);
-  return e;
-}
-function damageEnemy(e, dmg, head) {
-  if (!e.alive) return;
-  e.hp -= dmg; e.aimT = Math.max(e.aimT, (e.def.react || 0) * 0.5);
-  if (e.hp <= 0) killEnemy(e, head, false);
-}
-function killEnemy(e, head, silent) {
-  e.alive = false; e.deadT = 0;
-  if (e.mixer) { e.acts.die.timeScale = 1.4; setAnim(e, 'die', 0.12); }
-  for (const m of e.hit) { const i = hitMeshes.indexOf(m); if (i >= 0) hitMeshes.splice(i, 1); }
-  if (e.drone) { if (!silent) explode(e.group.position, 0, 0, false); scene.remove(e.group); e.gone = true; }
-  if (silent) return;
-  S.kills++; if (head) S.heads++; sfx.kill();
-  const pay = e.def.score + (head ? RULES.headBonus : 0); S.money += pay; S.earned += pay;
-  feed((head ? 'HEADSHOT — ' : 'KILLED — ') + e.def.name + '  +$' + pay, head);
-  if (!e.drone) {
-    const r = rand();
-    if (r < RULES.dropAmmo) addPickup('ammo', e.group.position.x, e.group.position.z);
-    else if (r < RULES.dropAmmo + RULES.dropMed) addPickup('med', e.group.position.x, e.group.position.z);
-  }
-}
-function updateEnemy(e, dt) {
-  const g = e.group, def = e.def, p = g.position;
-  if (!e.alive) { e.deadT += dt; if (e.mixer) e.mixer.update(dt); else g.rotation.x = -Math.min(1, e.deadT / 0.4) * 1.5; if (e.deadT > 7) { scene.remove(g); e.gone = true; } return; }
-  const px = P.pos.x, pz = P.pos.z, chestY = P.pos.y + P.eye - 0.25;
-  let dx = px - p.x, dz = pz - p.z; const dist = Math.hypot(dx, dz) || 1e-3; dx /= dist; dz /= dist;
-  if ((e.losT -= dt) <= 0) {
-    e.losT = 0.14 + rand() * 0.1;
-    const oy = p.y + (e.drone ? 0 : 1.5 * def.scale);
-    e.los = raycastWorld(p.x, oy, p.z, px - p.x, chestY - oy, pz - p.z, colliders) >= 1;
-  }
-  // Follow the flow field toward the player
-  const followFlow = (speed) => {
-    flowTarget(grid, flow, p.x, p.z, px, pz, _ft);
-    const vx = _ft.x - p.x, vz = _ft.z - p.z, l = Math.hypot(vx, vz) || 1;
-    p.x += vx / l * speed * dt; p.z += vz / l * speed * dt; return Math.atan2(vx, vz);
-  };
-  if (e.drone) {
-    const d3 = Math.hypot(px - p.x, chestY - p.y, pz - p.z);
-    if (d3 < 1.7) { explode(p, 0, 0, false); damagePlayer(def.dmg, p.x, p.z); killEnemy(e, false, true); scene.remove(g); e.gone = true; return; }
-    if (e.los && dist < def.range) { const k = def.dive * dt / d3; p.x += (px - p.x) * k; p.y += (chestY - p.y) * k; p.z += (pz - p.z) * k; }
-    else { followFlow(def.speed); p.y += (7 + Math.sin(e.phase) * 0.5 - p.y) * Math.min(1, 2 * dt); }
-    e.phase += dt * 3; resolveCircle(p, 0.5, p.y - 0.3, 0.6, colliders);
-    g.rotation.y = Math.atan2(dx, dz); for (const r of e.rotors) r.rotation.y += dt * 40;
-    if ((e.shotT -= dt) <= 0) { e.shotT = 0.35; sfx.drone(dist); }
-    return;
-  }
-  const engage = e.los && dist < def.range;
-  let face = g.rotation.y, moved = false, animSpeed = 0;
-  if (engage) {
-    if ((e.strafeT -= dt) <= 0) { e.strafe = Math.floor(rand() * 3) - 1; e.strafeT = 0.8 + rand() * 1.6; }
-    let mx = -dz * e.strafe * 0.6, mz = dx * e.strafe * 0.6;
-    if (dist > def.pref) { flowTarget(grid, flow, p.x, p.z, px, pz, _ft); const vx = _ft.x - p.x, vz = _ft.z - p.z, l = Math.hypot(vx, vz) || 1; mx += vx / l; mz += vz / l; } else if (dist < def.pref * 0.5) { mx -= dx * 0.6; mz -= dz * 0.6; }
-    const ml = Math.hypot(mx, mz);
-    if (ml > 0.01) { const sp = def.speed * 0.55; p.x += mx / ml * sp * dt; p.z += mz / ml * sp * dt; e.phase += sp * dt * 2.4; moved = true; animSpeed = sp; }
-    face = Math.atan2(dx, dz);
-  } else { const sp = def.speed * (def.run || 1); face = followFlow(sp); e.phase += sp * dt * 2.4; moved = true; animSpeed = sp; }
-  resolveCircle(p, 0.4, 0, 1.7, colliders);
-  g.rotation.y = lerpAngle(g.rotation.y, face, Math.min(1, 10 * dt));
-  const sw = moved ? Math.sin(e.phase) * 0.6 : 0; e.legL.rotation.x = sw; e.legR.rotation.x = -sw;
-  if (e.mixer) {
-    // Running toward the player uses the run clip; in a firefight the aim clip plays, slowed to a near standstill when not strafing.
-    const name = engage ? 'aim' : 'run'; setAnim(e, name);
-    const base = (soldierProto.speed[name] || 1) * def.scale;
-    e.acts[name].timeScale = engage ? (moved ? Math.min(1.8, Math.max(0.6, animSpeed / base)) : 0.12) : Math.min(2.2, Math.max(0.7, animSpeed / base));
-    e.mixer.update(dt);
-    if (e.gunQ) e.handGun.quaternion.slerp(e.gunQ, Math.min(1, 10 * dt));
-  }
-  // Shooting: see the player -> reaction time -> burst -> pause
-  if (engage) {
-    e.aimT += dt;
-    if (e.aimT > def.react) {
-      if (e.burst > 0) { if ((e.shotT -= dt) <= 0) { enemyShoot(e, dx, dz, dist, chestY); e.shotT = def.rof; if (--e.burst === 0) e.pauseT = def.pause * (0.7 + rand() * 0.6); } }
-      else if ((e.pauseT -= dt) <= 0) e.burst = def.burst;
-    }
-  } else e.aimT = Math.max(0, e.aimT - dt * 2);
-}
-function enemyShoot(e, dx, dz, dist, chestY) {
-  const def = e.def, p = e.group.position;
-  _v.set(p.x + dx * 0.6, 1.3 * def.scale, p.z + dz * 0.6);
-  const acc = RULES.enemyAccuracy * def.acc * Math.max(0.25, Math.min(1, 1.15 - dist / def.range)) * (P.crouch ? 0.65 : 1) * (Math.hypot(P.vel.x, P.vel.z) > 6 ? 0.7 : 1);
-  flash(_v, 0xffd080, 0.3, 0.7, 0.06); sfx.enemy(dist);
-  if (rand() < acc) { _v2.set(P.pos.x, chestY, P.pos.z); tracer(_v, _v2, true); damagePlayer(def.dmg, p.x, p.z); }
-  else { _v2.set(P.pos.x + (rand() - 0.5) * 3 + dx * 8, chestY + (rand() - 0.3) * 1.6, P.pos.z + (rand() - 0.5) * 3 + dz * 8); tracer(_v, _v2, true); }
-}
-
-// ============================================================ Pickups
 function addPickup(type, x, z) {
   const g = new THREE.Group();
   if (type === 'ammo') box(g, lam(0x55702f), 0.5, 0.3, 0.3, 0, 0, 0);
-  else if (type === 'med') { box(g, lam(0xeeeeee), 0.42, 0.3, 0.3, 0, 0, 0); box(g, redMat, 0.14, 0.31, 0.31, 0, 0, 0); }
+  else if (type === 'med') { box(g, lam(0xeeeeee), 0.42, 0.3, 0.3, 0, 0, 0); box(g, pickupRedMat, 0.14, 0.31, 0.31, 0, 0, 0); }
   else { box(g, lam(0x5a6a3c), 1.1, 0.8, 0.8, 0, 0, 0); box(g, lam(0xffb347), 1.12, 0.1, 0.82, 0, 0.2, 0); }
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: type === 'med' ? 0xffffff : type === 'supply' ? 0xffb347 : 0x9fd36a, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.55 }));
+  const glow = new THREE.Sprite(pickupGlowMats[type] || pickupGlowMats.ammo);
   glow.scale.setScalar(type === 'supply' ? 4 : 1.8); g.add(glow);
   g.position.set(x, type === 'supply' ? 0.6 : 0.5, z); scene.add(g);
   pickups.push({ type, mesh: g, t: 0 });
 }
+
 function updatePickups(dt) {
+  const W = weapons.getW();
   for (let i = pickups.length - 1; i >= 0; i--) {
     const k = pickups[i], m = k.mesh; k.t += dt; m.rotation.y += dt * 1.5; if (k.type !== 'supply') m.position.y = 0.5 + Math.sin(k.t * 3) * 0.08;
     if (Math.hypot(m.position.x - P.pos.x, m.position.z - P.pos.z) > (k.type === 'supply' ? 2 : 1.4)) { if (k.type !== 'supply' && k.t > 45) { scene.remove(m); pickups.splice(i, 1); } continue; }
     const r = W[0];
-    if (k.type === 'ammo') { if (r.reserve >= r.def.maxReserve) continue; const n = Math.min(RULES.ammoPickup, r.def.maxReserve - r.reserve); r.reserve += n; tip('+' + n + ' RIFLE AMMO'); }
-    else if (k.type === 'med') { if (P.hp >= PL.hp) continue; P.hp = Math.min(PL.hp, P.hp + RULES.medPickup); tip('+' + RULES.medPickup + ' HEALTH'); }
+    if (k.type === 'ammo') { if (r.reserve >= r.def.maxReserve) continue; const n = Math.min(RULES.ammoPickup, r.def.maxReserve - r.reserve); r.reserve += n; hud.tip('+' + n + ' RIFLE AMMO'); }
+    else if (k.type === 'med') { if (P.hp >= PL.hp) continue; P.hp = Math.min(PL.hp, P.hp + RULES.medPickup); hud.tip('+' + RULES.medPickup + ' HEALTH'); }
     else if (r.reserve >= r.def.maxReserve && P.hp >= PL.hp && P.grenades >= PL.maxGrenades) continue;
-    else { r.reserve = Math.min(r.def.maxReserve, r.reserve + RULES.supplyAmmo); P.hp = Math.min(PL.hp, P.hp + RULES.supplyHeal); P.grenades = Math.min(PL.maxGrenades, P.grenades + RULES.supplyGrenades); for (const x of W) if (x.def.supply && x.owned) x.reserve = Math.min(x.def.maxReserve, x.reserve + x.def.supply); tip('RESUPPLIED'); }
+    else { r.reserve = Math.min(r.def.maxReserve, r.reserve + RULES.supplyAmmo); P.hp = Math.min(PL.hp, P.hp + RULES.supplyHeal); P.grenades = Math.min(PL.maxGrenades, P.grenades + RULES.supplyGrenades); for (const x of W) if (x.def.supply && x.owned) x.reserve = Math.min(x.def.maxReserve, x.reserve + x.def.supply); hud.tip('RESUPPLIED'); }
     sfx.pick(); scene.remove(m); pickups.splice(i, 1);
   }
 }
 
-// ============================================================ Waves
+// ============================================================ Waves & Flow
 function startWave(n) {
   S.wave = n; const w = WAVES[n];
   S.queue = expandWave(w); S.spawnT = 0.5;
-  banner(w.name, `WAVE ${n + 1}`); radio(w.radio);
+  hud.banner(w.name, `WAVE ${n + 1}`); hud.radio(w.radio);
 }
 function updateWaves(dt) {
   if (S.interT > 0) { if ((S.interT -= dt) <= 0) startWave(S.wave + 1); return; }
-  if (S.queue.length) { if ((S.spawnT -= dt) <= 0 && S.alive < RULES.maxAlive) { spawnEnemy(S.queue.pop()); S.spawnT = RULES.spawnGap; } }
+  if (S.queue.length) { if ((S.spawnT -= dt) <= 0 && S.alive < RULES.maxAlive) { enemiesSys.spawnEnemy(S.queue.pop()); S.spawnT = RULES.spawnGap; } }
   else if (S.alive === 0) {
     if (S.wave >= WAVES.length - 1) { endGame(true); return; }
-    S.interT = RULES.intermission; banner('REPELLED', `WAVE ${S.wave + 1}`, 2.5); radio(STORY.supply, 6); tip('PRESS B — ARMORY');
+    S.interT = RULES.intermission; hud.banner('REPELLED', `WAVE ${S.wave + 1}`, 2.5); hud.radio(STORY.supply, 6); hud.tip('PRESS B — ARMORY');
     if (!pickups.some((p) => p.type === 'supply')) addPickup('supply', MAP.supply.x, MAP.supply.z);
   }
 }
 
-// ============================================================ Flow
 function setMode(m) {
   S.mode = m;
   $('menu').classList.toggle('hidden', m !== 'menu'); $('pause').classList.toggle('hidden', m !== 'paused');
   $('end').classList.toggle('hidden', m !== 'dead' && m !== 'won'); $('hud').classList.toggle('hidden', m === 'menu');
   $('shop').classList.toggle('hidden', m !== 'shop');
-  if (m !== 'playing') hud.scope.style.display = 'none';
-  gun.visible = m !== 'menu';
+  if (m !== 'playing') hud.setScope(false);
+  weapons.gun.visible = m !== 'menu';
 }
+
 let lockFailed = false;
-function lock() { if (NOLOCK) return; try { const r = renderer.domElement.requestPointerLock(); if (r && r.catch) r.catch(() => { lockFailed = true; }); } catch { lockFailed = true; /* still playable without pointer lock */ } }
+function lock() { if (NOLOCK) return; try { const r = renderer.domElement.requestPointerLock(); if (r && r.catch) r.catch(() => { lockFailed = true; }); } catch { lockFailed = true; } }
+
 function clearWorld() {
-  for (const e of enemies) scene.remove(e.group); enemies.length = 0; hitMeshes.length = 0;
+  enemiesSys.clearEnemies();
   for (const p of pickups) scene.remove(p.mesh); pickups.length = 0;
-  for (const g of grenades) scene.remove(g.m); grenades.length = 0;
-  for (const l of tracers) l.visible = false; for (const s of flashes) s.visible = false;
+  weapons.clearGrenades();
+  fx.clearFx();
 }
+
 function toMenu() {
-  clearWorld(); firing = false; keys.clear(); P.ads = false;
+  clearWorld(); input.firing = false; keys.clear(); P.ads = false;
   camera.fov = 75; camera.updateProjectionMatrix();
   if (document.pointerLockElement) document.exitPointerLock();
   setMode('menu');
 }
 
-// ---- Shop: kills pay money (ENEMY_TYPES[].score); B opens the shop, which pauses the fight
-function shopItems() {
-  return SHOP.map((it) => {
-    const w = W.find((x) => x.def.id === it.weapon); let state = 'buy';
-    if (it.type === 'weapon') { if (w.owned) state = 'owned'; }
-    else if (it.type === 'ammo') { if (!w.owned) state = 'locked'; else if (w.reserve >= w.def.maxReserve) state = 'full'; }
-    else if (it.type === 'grenade') { if (P.grenades >= PL.maxGrenades) state = 'full'; }
-    else if (it.type === 'med') { if (P.hp >= PL.hp) state = 'full'; }
-    if (state === 'buy' && S.money < it.price) state = 'poor';
-    return { it, w, state };
-  });
-}
-const SHOP_LABEL = { buy: 'BUY', owned: 'OWNED', locked: 'NEED THE WEAPON', full: 'FULL', poor: 'NOT ENOUGH' };
-function renderShop() {
-  $('shopMoney').textContent = '$' + S.money.toLocaleString('en-US');
-  $('shopList').innerHTML = shopItems().map(({ it, state }) => `<div class="item ${state}"><div><b>${it.name}</b><span>${it.desc}</span></div><div class="price mono">$${it.price.toLocaleString('en-US')}</div><button data-id="${it.id}" ${state === 'buy' ? '' : 'disabled'}>${SHOP_LABEL[state]}</button></div>`).join('');
-}
-function buy(id) {
-  const r = shopItems().find((x) => x.it.id === id);
-  if (!r || r.state !== 'buy') return false;
-  S.money -= r.it.price;
-  if (r.it.type === 'weapon') { r.w.owned = true; r.w.mag = r.w.def.mag; r.w.reserve = r.w.def.reserve; }
-  else if (r.it.type === 'ammo') r.w.reserve = Math.min(r.w.def.maxReserve, r.w.reserve + r.it.amount);
-  else if (r.it.type === 'grenade') P.grenades = Math.min(PL.maxGrenades, P.grenades + r.it.amount);
-  else if (r.it.type === 'med') P.hp = Math.min(PL.hp, P.hp + r.it.amount);
-  sfx.pick(); renderShop(); return true;
-}
-function openShop() {
-  if (S.mode !== 'playing') return;
-  firing = false; keys.clear(); P.ads = false; setMode('shop'); renderShop();
-  if (document.pointerLockElement) document.exitPointerLock();
-}
-function closeShop() { if (S.mode !== 'shop') return; setMode('playing'); last = performance.now(); lock(); }
+const shop = createShop({
+  S, P, getW: weapons.getW, setMode,
+  onPauseInput: () => { input.firing = false; keys.clear(); P.ads = false; },
+  onResume: () => { last = performance.now(); lock(); },
+});
 
 function startGame() {
   initAudio();
@@ -999,13 +180,15 @@ function startGame() {
   Object.assign(S, { wave: -1, queue: [], spawnT: 0, interT: RULES.firstDelay, time: 0, kills: 0, heads: 0, shots: 0, hits: 0, flowT: 0, alive: 0, money: 0, earned: 0 });
   P.pos.set(MAP.playerStart.x, 0, MAP.playerStart.z); P.vel.set(0, 0, 0);
   Object.assign(P, { yaw: 0, pitch: 0, hp: PL.hp, eye: PL.eye, lastHurt: -99, grenades: PL.grenades, ads: false, bloom: 0, kick: 0 });
-  resetWeapons(); firing = false; keys.clear();
+  weapons.resetWeapons(); input.firing = false; keys.clear();
   camera.fov = 75; camera.updateProjectionMatrix();
+  hud.reset();
   setMode('playing'); lock();
-  banner('THE LAST BLOCK', 'HOLD THE CIVIC CENTER', 4); radio(STORY.intro, 6.5);
+  hud.banner('THE LAST BLOCK', 'HOLD THE CIVIC CENTER', 4); hud.radio(STORY.intro, 6.5);
 }
+
 function endGame(win) {
-  setMode(win ? 'won' : 'dead'); firing = false;
+  setMode(win ? 'won' : 'dead'); input.firing = false;
   if (document.pointerLockElement) document.exitPointerLock();
   $('end').className = 'screen ' + (win ? 'win' : 'lose');
   $('endKicker').textContent = win ? 'MISSION COMPLETE' : `FELL ON WAVE ${S.wave + 1}`;
@@ -1020,18 +203,12 @@ function update(dt) {
   S.time += dt;
   updatePlayer(dt);
   if ((S.flowT -= dt) <= 0) { S.flowT = 0.35; flowField(grid, cellIx(P.pos.x), cellIx(P.pos.z), flow); }
-  updateWeapons(dt);
-  updateGrenades(dt);
-  let alive = 0;
-  for (let i = enemies.length - 1; i >= 0; i--) { const e = enemies[i]; updateEnemy(e, dt); if (e.gone) enemies.splice(i, 1); else if (e.alive) alive++; }
-  // Keep enemies from overlapping
-  for (let i = 0; i < enemies.length; i++) { const a = enemies[i]; if (!a.alive || a.drone) continue;
-    for (let j = i + 1; j < enemies.length; j++) { const b = enemies[j]; if (!b.alive || b.drone) continue;
-      const dx = b.group.position.x - a.group.position.x, dz = b.group.position.z - a.group.position.z, d = Math.hypot(dx, dz);
-      if (d < 0.9 && d > 1e-4) { const k = (0.9 - d) / d * 0.5; a.group.position.x -= dx * k; a.group.position.z -= dz * k; b.group.position.x += dx * k; b.group.position.z += dz * k; } } }
-  S.alive = alive;
+  weapons.updateWeapons(dt, input);
+  weapons.updateGrenades(dt);
+  S.alive = enemiesSys.updateEnemies(dt);
   if (S.mode !== 'playing') return;
-  updatePickups(dt); updateWaves(dt); updateHud(dt);
+  updatePickups(dt); updateWaves(dt);
+  hud.update(dt, { S, P, W: weapons.getW(), enemies, pickups, MAP });
 }
 
 let last = performance.now();
@@ -1040,48 +217,54 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (S.mode === 'playing') update(dt);
   else if (S.mode === 'menu') { const t = now / 1000 * 0.06; camera.position.set(Math.sin(t) * 95, 38, 20 + Math.cos(t) * 95); camera.lookAt(0, 14, -10); }
-  if (S.mode !== 'paused') updateFx(dt);
+  if (S.mode !== 'paused') fx.updateFx(dt);
   updateSmoke(now / 1000);
+  updateSun(S.mode === 'playing' ? P.pos.x : 0, S.mode === 'playing' ? P.pos.z : 20);
   sky.position.copy(camera.position);
   renderer.render(scene, camera);
 }
 
 // ============================================================ Input
 addEventListener('keydown', (e) => {
-  if (S.mode === 'shop') { if (!e.repeat && (e.code === 'KeyB' || e.code === 'Escape')) { e.preventDefault(); closeShop(); } return; }
+  if (S.mode === 'shop') { if (!e.repeat && (e.code === 'KeyB' || e.code === 'Escape')) { e.preventDefault(); shop.closeShop(); } return; }
   if (S.mode !== 'playing') return;
-  // Ctrl is crouch, so stop Ctrl+S / Ctrl+D / Ctrl+A from opening browser dialogs (Ctrl+W cannot be blocked by a page)
   if (e.ctrlKey || ['Space', 'Tab', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
   if (e.repeat) return;
-  if (e.code === 'Escape' && !document.pointerLockElement) { setMode('paused'); firing = false; keys.clear(); return; }
+  if (e.code === 'Escape' && !document.pointerLockElement) { setMode('paused'); input.firing = false; keys.clear(); return; }
   keys.add(e.code);
-  if (e.code === 'KeyR') startReload();
-  else if (/^Digit[1-9]$/.test(e.code)) { const w = W[+e.code.slice(5) - 1]; if (w) { if (w.owned) switchWeapon(W.indexOf(w)); else tip('BUY THE ' + w.def.name.toUpperCase() + ' IN THE ARMORY — B'); } }
-  else if (e.code === 'KeyB') openShop();
-  else if (e.code === 'KeyG') throwGrenade();
+  if (e.code === 'KeyR') weapons.startReload();
+  else if (/^Digit[1-9]$/.test(e.code)) {
+    const W = weapons.getW(), w = W[+e.code.slice(5) - 1];
+    if (w) { if (w.owned) weapons.switchWeapon(W.indexOf(w)); else hud.tip('BUY THE ' + w.def.name.toUpperCase() + ' IN THE ARMORY — B'); }
+  }
+  else if (e.code === 'KeyB') shop.openShop();
+  else if (e.code === 'KeyG') weapons.throwGrenade();
 });
 addEventListener('keyup', (e) => keys.delete(e.code));
-addEventListener('blur', () => { keys.clear(); firing = false; });
+addEventListener('blur', () => { keys.clear(); input.firing = false; });
 addEventListener('mousemove', (e) => {
-  if (S.mode !== 'playing') return; // look still works without pointer lock (fallback)
-  const ex = e.clientX / innerWidth; edgeTurn = document.pointerLockElement ? 0 : ex < 0.12 ? -(1 - ex / 0.12) : ex > 0.88 ? (ex - 0.88) / 0.12 : 0;
-  const s = 0.0022 * Math.min(1, camera.fov / 75) * (P.ads ? 0.85 : 1); // slower when zoomed in
+  if (S.mode !== 'playing') return;
+  const ex = e.clientX / innerWidth; input.edgeTurn = document.pointerLockElement ? 0 : ex < 0.12 ? -(1 - ex / 0.12) : ex > 0.88 ? (ex - 0.88) / 0.12 : 0;
+  const s = 0.0022 * CFG.sens * Math.min(1, camera.fov / 75) * (P.ads ? 0.85 : 1);
   P.yaw -= e.movementX * s; P.pitch = Math.max(-1.5, Math.min(1.5, P.pitch - e.movementY * s));
 });
 addEventListener('mousedown', (e) => {
   if (S.mode !== 'playing') return;
-  if (!NOLOCK && document.pointerLockElement !== renderer.domElement) lock(); // retry the lock, but never swallow the click
-  if (e.button === 0) { firing = true; fireLatch = false; fireQueued = true; } else if (e.button === 2) P.ads = true;
+  if (!NOLOCK && document.pointerLockElement !== renderer.domElement) lock();
+  if (e.button === 0) { input.firing = true; input.fireLatch = false; input.fireQueued = true; } else if (e.button === 2) P.ads = true;
 });
-addEventListener('mouseup', (e) => { if (e.button === 0) firing = false; else if (e.button === 2) P.ads = false; });
+addEventListener('mouseup', (e) => { if (e.button === 0) input.firing = false; else if (e.button === 2) P.ads = false; });
 addEventListener('contextmenu', (e) => e.preventDefault());
 let wheelT = 0;
-addEventListener('wheel', () => { const t = performance.now(); if (S.mode === 'playing' && t - wheelT > 300) { wheelT = t; let i = P.wi; do { i = (i + 1) % W.length; } while (!W[i].owned); switchWeapon(i); } }, { passive: true });
-document.addEventListener('pointerlockerror', () => { if (!lockFailed) { lockFailed = true; tip('MOUSE LOCK UNAVAILABLE — TRY CHROME'); } });
+addEventListener('wheel', () => {
+  const t = performance.now(), W = weapons.getW();
+  if (S.mode === 'playing' && t - wheelT > 300) { wheelT = t; let i = P.wi; do { i = (i + 1) % W.length; } while (!W[i].owned); weapons.switchWeapon(i); }
+}, { passive: true });
+document.addEventListener('pointerlockerror', () => { if (!lockFailed) { lockFailed = true; hud.tip('MOUSE LOCK UNAVAILABLE — TRY CHROME'); } });
 document.addEventListener('pointerlockchange', () => {
   if (document.pointerLockElement) lockFailed = false;
   const locked = document.pointerLockElement === renderer.domElement;
-  if (!locked && S.mode === 'playing' && !NOLOCK) { setMode('paused'); firing = false; keys.clear(); }
+  if (!locked && S.mode === 'playing' && !NOLOCK) { setMode('paused'); input.firing = false; keys.clear(); }
   else if (locked && S.mode === 'paused') { setMode('playing'); last = performance.now(); }
 });
 document.addEventListener('visibilitychange', () => { if (document.hidden && S.mode === 'playing' && !NOLOCK) { if (document.pointerLockElement) document.exitPointerLock(); else setMode('paused'); } });
@@ -1089,14 +272,20 @@ $('btnStart').addEventListener('click', startGame);
 $('btnRestart').addEventListener('click', startGame);
 $('btnMenu').addEventListener('click', toMenu);
 $('btnEndMenu').addEventListener('click', toMenu);
-$('btnShopClose').addEventListener('click', closeShop);
-$('shopList').addEventListener('click', (e) => { const b = e.target.closest('button[data-id]'); if (b) buy(b.dataset.id); });
 $('btnResume').addEventListener('click', () => { if (NOLOCK || lockFailed) { setMode('playing'); last = performance.now(); } else lock(); });
+bindSettingsUI();
 
 setMode('menu');
 requestAnimationFrame(frame);
 
 // Test/debug hook: step() advances the simulation manually when the tab is in the background (rAF throttled)
-window.__game = { FP, ARMS, poseFpArms, fpArms: () => fpArms, SOLDIER, placeHandGun, soldierReady: () => !!soldierProto, VIEW, loadViewModels, gun, S, P, W: () => W, enemies, pickups, MAP, startGame, spawnEnemy, damageEnemy, fire, throwGrenade, keys, openShop, closeShop, buy, toMenu, switchWeapon, setMode,
-  setFiring: (v) => { firing = v; fireLatch = false; },
-  step(n = 1, dt = 1 / 60) { for (let i = 0; i < n && S.mode === 'playing'; i++) { update(dt); updateFx(dt); } sky.position.copy(camera.position); renderer.render(scene, camera); } };
+window.__game = {
+  CFG, assetsReady, FP, ARMS, poseFpArms: weapons.poseFpArms, fpArms: weapons.fpArms,
+  SOLDIER, placeHandGun: enemiesSys.placeHandGun, soldierReady: enemiesSys.soldierReady,
+  VIEW, loadViewModels: weapons.loadViewModels, gun: weapons.gun, S, P, W: weapons.getW,
+  enemies, pickups, MAP, startGame, spawnEnemy: enemiesSys.spawnEnemy, damageEnemy: enemiesSys.damageEnemy,
+  fire: weapons.fire, throwGrenade: weapons.throwGrenade, keys, openShop: shop.openShop,
+  closeShop: shop.closeShop, buy: shop.buy, toMenu, switchWeapon: weapons.switchWeapon, setMode,
+  setFiring: (v) => { input.firing = v; input.fireLatch = false; },
+  step(n = 1, dt = 1 / 60) { for (let i = 0; i < n && S.mode === 'playing'; i++) { update(dt); fx.updateFx(dt); } sky.position.copy(camera.position); renderer.render(scene, camera); },
+};

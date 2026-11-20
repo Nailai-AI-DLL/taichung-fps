@@ -26,35 +26,103 @@ export function segAABB(ox, oy, oz, dx, dy, dz, b) {
   return t0;
 }
 
+const SMIN = -208, SCELL = 16, SN = 26; // 26 * 16 = 416 m covers [-208, 208]
+const scell = (v) => Math.max(0, Math.min(SN - 1, Math.floor((v - SMIN) / SCELL)));
+
+// Builds a 2D spatial hash grid attached to `colliders` so raycastWorld, resolveCircle, and groundAt skip distant AABBs.
+export function indexColliders(colliders) {
+  const cells = Array.from({ length: SN * SN }, () => []);
+  for (let i = 0; i < colliders.length; i++) {
+    const c = colliders[i];
+    const x0 = scell(c.minX), x1 = scell(c.maxX), z0 = scell(c.minZ), z1 = scell(c.maxZ);
+    for (let iz = z0; iz <= z1; iz++) for (let ix = x0; ix <= x1; ix++) cells[ix + iz * SN].push(i);
+  }
+  colliders._spatial = { cells, seen: new Int32Array(colliders.length), stamp: 0 };
+  return colliders;
+}
+
+function nextStamp(sp) {
+  if (++sp.stamp >= 0x7ffffff0) { sp.seen.fill(0); sp.stamp = 1; }
+  return sp.stamp;
+}
+
 // Returns the first t at which the segment hits the world, or 1 if it hits nothing
 export function raycastWorld(ox, oy, oz, dx, dy, dz, colliders) {
-  let best = 1;
-  for (let i = 0; i < colliders.length; i++) {
-    const t = segAABB(ox, oy, oz, dx, dy, dz, colliders[i]);
-    if (t >= 0 && t < best) best = t;
+  const sp = colliders._spatial;
+  if (!sp) {
+    let best = 1;
+    for (let i = 0; i < colliders.length; i++) {
+      const t = segAABB(ox, oy, oz, dx, dy, dz, colliders[i]);
+      if (t >= 0 && t < best) best = t;
+    }
+    return best;
+  }
+  const SMAX = SMIN + SN * SCELL;
+  let t0 = 0, t1 = 1;
+  if (Math.abs(dx) < 1e-9) { if (ox < SMIN || ox > SMAX) return 1; }
+  else { let ta = (SMIN - ox) / dx, tb = (SMAX - ox) / dx; if (ta > tb) { const s = ta; ta = tb; tb = s; } if (ta > t0) t0 = ta; if (tb < t1) t1 = tb; if (t0 > t1) return 1; }
+  if (Math.abs(dz) < 1e-9) { if (oz < SMIN || oz > SMAX) return 1; }
+  else { let ta = (SMIN - oz) / dz, tb = (SMAX - oz) / dz; if (ta > tb) { const s = ta; ta = tb; tb = s; } if (ta > t0) t0 = ta; if (tb < t1) t1 = tb; if (t0 > t1) return 1; }
+
+  const stamp = nextStamp(sp), seen = sp.seen, cells = sp.cells;
+  let ix = scell(ox + dx * t0), iz = scell(oz + dz * t0), best = 1;
+  const stepX = dx > 1e-9 ? 1 : dx < -1e-9 ? -1 : 0;
+  const stepZ = dz > 1e-9 ? 1 : dz < -1e-9 ? -1 : 0;
+  const tDeltaX = stepX ? Math.abs(SCELL / dx) : Infinity;
+  const tDeltaZ = stepZ ? Math.abs(SCELL / dz) : Infinity;
+  let tMaxX = stepX ? (SMIN + (ix + (stepX > 0 ? 1 : 0)) * SCELL - ox) / dx : Infinity;
+  let tMaxZ = stepZ ? (SMIN + (iz + (stepZ > 0 ? 1 : 0)) * SCELL - oz) / dz : Infinity;
+
+  while (ix >= 0 && ix < SN && iz >= 0 && iz < SN) {
+    const bucket = cells[ix + iz * SN];
+    for (let j = 0; j < bucket.length; j++) {
+      const idx = bucket[j];
+      if (seen[idx] === stamp) continue;
+      seen[idx] = stamp;
+      const t = segAABB(ox, oy, oz, dx, dy, dz, colliders[idx]);
+      if (t >= 0 && t < best) best = t;
+    }
+    const tNext = tMaxX < tMaxZ ? tMaxX : tMaxZ;
+    if (tNext > best || tNext > t1) break;
+    if (tMaxX < tMaxZ) { ix += stepX; tMaxX += tDeltaX; }
+    else { iz += stepZ; tMaxZ += tDeltaZ; }
   }
   return best;
 }
 
 // Pushes a cylinder (a circle in the XZ plane) out of AABBs; p needs x and z. Low objects you can step onto (top <= feet + 0.35) do not block.
 export function resolveCircle(p, r, feetY, bodyH, colliders) {
+  const sp = colliders._spatial;
+  const push = (c) => {
+    if (c.maxY <= feetY + 0.35 || c.minY >= feetY + bodyH) return;
+    const cx = p.x < c.minX ? c.minX : p.x > c.maxX ? c.maxX : p.x;
+    const cz = p.z < c.minZ ? c.minZ : p.z > c.maxZ ? c.maxZ : p.z;
+    const dx = p.x - cx, dz = p.z - cz, d2 = dx * dx + dz * dz;
+    if (d2 >= r * r) return;
+    if (d2 > 1e-8) {
+      const d = Math.sqrt(d2), k = (r - d) / d;
+      p.x += dx * k; p.z += dz * k;
+    } else {
+      const l = p.x - c.minX, rr = c.maxX - p.x, n = p.z - c.minZ, f = c.maxZ - p.z;
+      const m = Math.min(l, rr, n, f);
+      if (m === l) p.x = c.minX - r; else if (m === rr) p.x = c.maxX + r;
+      else if (m === n) p.z = c.minZ - r; else p.z = c.maxZ + r;
+    }
+  };
   for (let pass = 0; pass < 2; pass++) {
-    for (let i = 0; i < colliders.length; i++) {
-      const c = colliders[i];
-      if (c.maxY <= feetY + 0.35 || c.minY >= feetY + bodyH) continue;
-      const cx = p.x < c.minX ? c.minX : p.x > c.maxX ? c.maxX : p.x;
-      const cz = p.z < c.minZ ? c.minZ : p.z > c.maxZ ? c.maxZ : p.z;
-      const dx = p.x - cx, dz = p.z - cz, d2 = dx * dx + dz * dz;
-      if (d2 >= r * r) continue;
-      if (d2 > 1e-8) {
-        const d = Math.sqrt(d2), k = (r - d) / d;
-        p.x += dx * k; p.z += dz * k;
-      } else {
-        // centre is inside the box: push out along the shallowest axis
-        const l = p.x - c.minX, rr = c.maxX - p.x, n = p.z - c.minZ, f = c.maxZ - p.z;
-        const m = Math.min(l, rr, n, f);
-        if (m === l) p.x = c.minX - r; else if (m === rr) p.x = c.maxX + r;
-        else if (m === n) p.z = c.minZ - r; else p.z = c.maxZ + r;
+    if (!sp) {
+      for (let i = 0; i < colliders.length; i++) push(colliders[i]);
+    } else {
+      const stamp = nextStamp(sp), seen = sp.seen, cells = sp.cells;
+      const x0 = scell(p.x - r), x1 = scell(p.x + r), z0 = scell(p.z - r), z1 = scell(p.z + r);
+      for (let iz = z0; iz <= z1; iz++) for (let ix = x0; ix <= x1; ix++) {
+        const bucket = cells[ix + iz * SN];
+        for (let j = 0; j < bucket.length; j++) {
+          const idx = bucket[j];
+          if (seen[idx] === stamp) continue;
+          seen[idx] = stamp;
+          push(colliders[idx]);
+        }
       }
     }
   }
@@ -64,10 +132,27 @@ export function resolveCircle(p, r, feetY, bodyH, colliders) {
 // Standing height under the feet (ground 0 or the top of a low object)
 export function groundAt(x, z, feetY, colliders, r = 0.25) {
   let g = 0;
-  for (let i = 0; i < colliders.length; i++) {
-    const c = colliders[i];
-    if (c.maxY > feetY + 0.35 || c.maxY <= g) continue;
-    if (x > c.minX - r && x < c.maxX + r && z > c.minZ - r && z < c.maxZ + r) g = c.maxY;
+  const sp = colliders._spatial;
+  if (!sp) {
+    for (let i = 0; i < colliders.length; i++) {
+      const c = colliders[i];
+      if (c.maxY > feetY + 0.35 || c.maxY <= g) continue;
+      if (x > c.minX - r && x < c.maxX + r && z > c.minZ - r && z < c.maxZ + r) g = c.maxY;
+    }
+    return g;
+  }
+  const stamp = nextStamp(sp), seen = sp.seen, cells = sp.cells;
+  const x0 = scell(x - r), x1 = scell(x + r), z0 = scell(z - r), z1 = scell(z + r);
+  for (let iz = z0; iz <= z1; iz++) for (let ix = x0; ix <= x1; ix++) {
+    const bucket = cells[ix + iz * SN];
+    for (let j = 0; j < bucket.length; j++) {
+      const idx = bucket[j];
+      if (seen[idx] === stamp) continue;
+      seen[idx] = stamp;
+      const c = colliders[idx];
+      if (c.maxY > feetY + 0.35 || c.maxY <= g) continue;
+      if (x > c.minX - r && x < c.maxX + r && z > c.minZ - r && z < c.maxZ + r) g = c.maxY;
+    }
   }
   return g;
 }
